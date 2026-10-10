@@ -230,6 +230,7 @@ export class Device {
       protocol: server.protocol,
       timeoutMs: server.timeoutMs,
       onStatus: () => this.patch({ servers: this.serverSnapshots(), hints: this.hints() }),
+      onReconnect: () => this.noteConnected(connection),
       onElicitation: (request) => this.onElicitation(request),
       onNotification: (method, params) => this.onServerEvent(server.id, 'mcp', method, params),
     });
@@ -242,23 +243,28 @@ export class Device {
     const { connection } = link;
     try {
       await connection.connect();
-      const snapshot = connection.snapshot();
-      this.add({
-        kind: 'connection',
-        server: connection.id,
-        url: connection.url,
-        status: 'connected',
-        protocolVersion: snapshot.protocolVersion,
-        era: snapshot.era,
-        sessionId: snapshot.sessionId,
-        serverInfo: snapshot.serverInfo,
-        capabilities: snapshot.capabilities,
-        toolCount: snapshot.tools.length,
-      });
+      this.noteConnected(connection);
     } catch (error) {
       this.add({ kind: 'connection', server: connection.id, url: connection.url, status: 'error', error: errorMessage(error) });
     }
     this.openEvents(link);
+  }
+
+  /** Put a connection (or a reconnection, with its new session) on the timeline. */
+  private noteConnected(connection: McpConnection): void {
+    const snapshot = connection.snapshot();
+    this.add({
+      kind: 'connection',
+      server: connection.id,
+      url: connection.url,
+      status: 'connected',
+      protocolVersion: snapshot.protocolVersion,
+      era: snapshot.era,
+      sessionId: snapshot.sessionId,
+      serverInfo: snapshot.serverInfo,
+      capabilities: snapshot.capabilities,
+      toolCount: snapshot.tools.length,
+    });
   }
 
   private openEvents(link: ServerLink): void {
@@ -725,6 +731,8 @@ export class Device {
     const provider: Provider | undefined = useScript ? this.scripted : this.provider;
     let error: string | undefined;
     try {
+      // A server that was down when the stage started, or went away since, gets another chance before each turn.
+      await Promise.all([...this.links.values()].map((link) => link.connection.ensure()));
       if (!provider) {
         error = this.providerSummary.error ?? 'No model provider is configured.';
         this.add({ kind: 'error', message: `The "${this.providerSummary.id}" provider is not configured`, detail: error });

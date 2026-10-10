@@ -5,8 +5,16 @@
  * By default the connection uses the 2025 `initialize` handshake, which
  * negotiates protocol version 2025-11-25 and a session (`Mcp-Session-Id`).
  * Set `protocol: auto` on a server to probe for 2026-07-28 first.
+ *
+ * A developer restarts their server many times a day, and every restart
+ * forgets this connection's session. The connection therefore repairs itself.
+ * After a quiet moment it pings before the next request; if the server is
+ * gone or no longer knows the session (HTTP 404), it connects again and only
+ * then sends the request. A tool call that fails on the wire is never sent
+ * twice, because it may have arrived: it reports that the server could not be
+ * reached, and the next request connects again first.
  */
-import { Client, StreamableHTTPClientTransport, type ClientCapabilities, type Tool } from '@modelcontextprotocol/client';
+import { Client, SdkHttpError, StreamableHTTPClientTransport, type ClientCapabilities, type Tool } from '@modelcontextprotocol/client';
 import { PRODUCT_VERSION, type CardResource, type ConnectionStatus, type JsonObject, type ServerSnapshot, type ToolResult, type ToolSummary } from '../shared/types.js';
 
 /** MIME type of an MCP Apps card, and the extension id a host advertises to say it can render them. */
@@ -35,7 +43,11 @@ export interface McpConnectionOptions {
   clientName?: string;
   /** Default timeout for one request, in milliseconds. */
   timeoutMs?: number;
+  /** After this long without a successful request, check that the server is still there before the next one. Default 1000 ms. */
+  idleCheckMs?: number;
   onStatus?: (snapshot: ServerSnapshot) => void;
+  /** The connection was lost and has been made again, with a new session. */
+  onReconnect?: (snapshot: ServerSnapshot) => void;
   /** The server asked the person a question. */
   onElicitation?: (request: ElicitationRequest) => Promise<ElicitationAnswer>;
   /** Any notification that arrived on the connection outside a request (logging, list changes, resource updates). */
@@ -73,6 +85,33 @@ export function summarizeTool(server: string, tool: Tool): ToolSummary {
   };
 }
 
+/** The server answered, but no longer knows this connection's session: it was restarted, or the session expired. */
+function sessionWasLost(error: unknown): boolean {
+  return error instanceof SdkHttpError && error.status === 404;
+}
+
+/**
+ * Why a request got no answer from any server, or `undefined` if it got one.
+ * Node reports this as a bare `TypeError: fetch failed`; the reason
+ * (ECONNREFUSED, ECONNRESET, ENOTFOUND) is a code somewhere down the `cause`
+ * chain. An empty string means it failed without saying why.
+ */
+function unreachableReason(error: unknown): string | undefined {
+  let failed = false;
+  let current: unknown = error;
+  for (let depth = 0; depth < 5 && current && typeof current === 'object'; depth += 1) {
+    const { message, code, errors, cause } = current as { message?: unknown; code?: unknown; errors?: unknown; cause?: unknown };
+    if (typeof message === 'string' && /fetch failed/i.test(message)) failed = true;
+    if (typeof code === 'string' && /^(E[A-Z_]+|UND_ERR_[A-Z_]+)$/.test(code)) return code;
+    current = Array.isArray(errors) && errors.length > 0 ? errors[0] : cause;
+  }
+  return failed ? '' : undefined;
+}
+
+function unreachableMessage(url: string, reason: string): string {
+  return `Could not reach ${url}${reason ? ` (${reason})` : ''}. Is the MCP server running?`;
+}
+
 export function errorMessage(error: unknown): string {
   if (error instanceof Error) {
     const cause = (error as { cause?: unknown }).cause;
@@ -93,6 +132,11 @@ export class McpConnection {
   private resources: Array<{ uri: string; name?: string; mimeType?: string }> = [];
   private readonly cards = new Map<string, CardResource>();
   private eventsState: ServerSnapshot['events'];
+  /** False until `connect()` is first called, and again after `close()`: a closed connection stays closed. */
+  private wanted = false;
+  private reconnecting: Promise<void> | undefined;
+  /** When a request last succeeded. */
+  private lastAnswer = 0;
 
   constructor(private readonly options: McpConnectionOptions) {
     this.id = options.id;
@@ -139,14 +183,15 @@ export class McpConnection {
   }
 
   async connect(): Promise<void> {
-    await this.close();
+    await this.dispose();
+    this.wanted = true;
     this.setStatus('connecting');
     // Declaring `elicitation.form` lets a server ask the person a question; the
     // extension entry says this host renders MCP Apps cards.
-    const capabilities = {
+    const capabilities: ClientCapabilities = {
       elicitation: { form: {} },
       extensions: { [MCP_APPS_EXTENSION_ID]: { mimeTypes: [MCP_APP_MIME_TYPE] } },
-    } as ClientCapabilities;
+    };
     const client = new Client(
       { name: this.options.clientName ?? 'voicestage', title: 'Voicestage', version: PRODUCT_VERSION },
       {
@@ -211,6 +256,7 @@ export class McpConnection {
       client.onclose = () => {
         if (this.client === client && this.status === 'connected') this.setStatus('closed', 'The server closed the connection.');
       };
+      this.lastAnswer = Date.now();
       this.setStatus('connected');
     } catch (error) {
       this.client = undefined;
@@ -229,6 +275,83 @@ export class McpConnection {
     return this.client;
   }
 
+  /** Connect again. Requests that find the connection broken at the same moment share one attempt. */
+  private reconnect(): Promise<void> {
+    const attempt = async (): Promise<void> => {
+      for (let tries = 1; ; tries += 1) {
+        try {
+          await this.connect();
+          break;
+        } catch (error) {
+          // Each socket still pooled for the old server process fails once; the next try opens a new one.
+          if (tries >= 4 || !/ECONNRESET|EPIPE|UND_ERR_SOCKET/.test(this.error ?? '')) throw error;
+        }
+      }
+      this.options.onReconnect?.(this.snapshot());
+    };
+    this.reconnecting ??= attempt().finally(() => {
+      this.reconnecting = undefined;
+    });
+    return this.reconnecting;
+  }
+
+  /**
+   * Make sure the server is there before a request: connect again if the
+   * connection is broken, and after a quiet moment ask with a ping, which is
+   * safe to lose. Throws when the server cannot be reached.
+   */
+  private async check(): Promise<void> {
+    if (!this.wanted) return;
+    if (this.reconnecting) return this.reconnecting;
+    if (this.status === 'error' || this.status === 'closed') return this.reconnect();
+    const client = this.client;
+    if (!client || this.status !== 'connected' || Date.now() - this.lastAnswer < (this.options.idleCheckMs ?? 1000)) return;
+    try {
+      await client.ping({ timeout: 3000 });
+      this.lastAnswer = Date.now();
+    } catch (error) {
+      // Any other failure is still an answer, so the server is there.
+      if (this.client === client && (sessionWasLost(error) || unreachableReason(error) !== undefined)) return this.reconnect();
+    }
+    // Another request may have started a reconnection while this one was asking.
+    if (this.reconnecting) await this.reconnecting;
+  }
+
+  /**
+   * Connect again if the connection is broken or the server has forgotten it.
+   * No I/O when a request succeeded a moment ago. Never throws: the connection
+   * status says how it went.
+   */
+  async ensure(): Promise<void> {
+    await this.check().catch(() => undefined);
+  }
+
+  /** Send one request, with the connection repaired first if need be. */
+  private async request<T>(send: (client: Client) => Promise<T>): Promise<T> {
+    await this.check();
+    const client = this.requireClient();
+    try {
+      const result = await send(client);
+      this.lastAnswer = Date.now();
+      return result;
+    } catch (error) {
+      if (!this.wanted) throw error;
+      if (sessionWasLost(error)) {
+        // Refused before anything ran, so sending it again on a new session is safe.
+        if (this.client === client) await this.reconnect();
+        else if (this.reconnecting) await this.reconnecting;
+        return send(this.requireClient());
+      }
+      const reason = unreachableReason(error);
+      if (reason !== undefined && this.client === client) {
+        // Not sent again: the request may have arrived before the connection broke.
+        this.setStatus('error', unreachableMessage(this.url, reason));
+        throw new Error(this.error, { cause: error });
+      }
+      throw error;
+    }
+  }
+
   listTools(): Tool[] {
     return this.tools;
   }
@@ -238,22 +361,22 @@ export class McpConnection {
   }
 
   async callTool(name: string, args: JsonObject, options: CallOptions = {}): Promise<ToolResult> {
-    const client = this.requireClient();
-    const result = await client.callTool(
-      { name, arguments: args },
-      {
-        onprogress: options.onProgress ? (update) => options.onProgress?.({ progress: update.progress, total: update.total, message: update.message }) : undefined,
-        signal: options.signal,
-        timeout: options.timeoutMs ?? 120_000,
-        resetTimeoutOnProgress: true,
-      },
+    const result = await this.request((client) =>
+      client.callTool(
+        { name, arguments: args },
+        {
+          onprogress: options.onProgress ? (update) => options.onProgress?.({ progress: update.progress, total: update.total, message: update.message }) : undefined,
+          signal: options.signal,
+          timeout: options.timeoutMs ?? 120_000,
+          resetTimeoutOnProgress: true,
+        },
+      ),
     );
     return result as ToolResult;
   }
 
   async readResource(uri: string): Promise<{ contents: Array<{ uri: string; mimeType?: string; text?: string; blob?: string; _meta?: JsonObject }> }> {
-    const client = this.requireClient();
-    return (await client.readResource({ uri })) as never;
+    return (await this.request((client) => client.readResource({ uri }))) as never;
   }
 
   /** Read an MCP Apps card (`ui://...`). Cached per connection: cards are static templates. */
@@ -274,6 +397,11 @@ export class McpConnection {
   }
 
   async close(): Promise<void> {
+    this.wanted = false;
+    await this.dispose();
+  }
+
+  private async dispose(): Promise<void> {
     const client = this.client;
     const transport = this.transport;
     this.client = undefined;
@@ -290,7 +418,9 @@ export class McpConnection {
 
 function describeConnectError(error: unknown, url: string): string {
   const message = errorMessage(error);
-  if (/ECONNREFUSED|fetch failed|ENOTFOUND|EAI_AGAIN/i.test(message)) return `Could not reach ${url}. Is the MCP server running?`;
+  const reason = unreachableReason(error);
+  if (reason !== undefined) return unreachableMessage(url, reason);
+  if (/ECONNREFUSED|fetch failed|ENOTFOUND|EAI_AGAIN/i.test(message)) return unreachableMessage(url, '');
   if (/401|unauthori[sz]ed/i.test(message)) return `${url} rejected the request as unauthorized. Check the headers configured for this device. (${message})`;
   return message;
 }
