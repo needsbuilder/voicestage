@@ -1,0 +1,71 @@
+# Voicestage with Hold On: a money-safety MCP server for voice assistants used
+# by older adults. Margaret asks for things on her kitchen display; her daughter
+# Sarah, the trusted contact, decides on her phone.
+#
+# Start the Hold On server first (in its own repository):
+#   npm install && npm run build && npm run seed:reset && npm start
+# Then, here:
+#   npm run dev -- --config examples/holdon/voicestage.config.yaml
+#
+# The tokens below are Hold On's public demo tokens, not secrets. Override any
+# value from the environment or a .env file.
+
+name: Hold On
+
+assistant:
+  provider: scripted
+
+servers:
+  holdon:
+    url: ${HOLDON_URL:-http://localhost:8787}/mcp
+    events:
+      url: ${HOLDON_URL:-http://localhost:8787}/events
+      announce:
+        # Sarah's phone lights up when Margaret's request is put on hold.
+        - on: hold.created
+          devices: [phone]
+          when: { hold.blocked: true }
+          say: "Hold On stopped a payment request from {{hold.member.name}}. The details are on your screen."
+          show: { tool: holdon_family_inbox }
+        - on: hold.created
+          devices: [phone]
+          say: "{{hold.member.name}} is asking to make a payment. The details are on your screen."
+          show: { tool: holdon_family_inbox }
+        # Margaret's display speaks up when Sarah has decided.
+        - on: hold.decided
+          devices: [kitchen]
+          say: "{{hold.decision.by}} has answered."
+          show: { tool: holdon_get_hold, args: { hold_id: "{{hold.hold_id}}" } }
+          then_say: "{{result.say_to_user}}"
+
+skills:
+  # The Agent Skill that ships with Hold On. HOLDON_DIR is the Hold On checkout.
+  holdon-money-safety: ${HOLDON_DIR:-../../../holdon}/skills/holdon-money-safety
+
+devices:
+  - id: kitchen
+    name: Kitchen display
+    kind: display
+    person: { name: Margaret, role: the person this assistant looks after }
+    servers:
+      - id: holdon
+        headers:
+          Authorization: Bearer ${HOLDON_MEMBER_TOKEN:-demo-member-margaret}
+    skills: [holdon-money-safety]
+    hints:
+      - "My Con Edison bill came in the mail. It's $182.40. Please pay it with my card."
+
+  - id: phone
+    name: Sarah's phone
+    kind: phone
+    person: { name: Sarah, role: "Margaret's daughter and trusted contact" }
+    servers:
+      - id: holdon
+        headers:
+          Authorization: Bearer ${HOLDON_CONTACT_TOKEN:-demo-contact-sarah}
+    skills: [holdon-money-safety]
+    hints:
+      - "Is anything waiting for me?"
+
+scenarios:
+  - scenarios

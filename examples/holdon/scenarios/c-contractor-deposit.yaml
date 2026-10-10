@@ -1,0 +1,88 @@
+name: A contractor nobody can look up
+description: >
+  Margaret's roofer wants a deposit. He is not on the registry of official
+  payees, which Hold On says plainly rather than guessing. The payment is
+  held; Sarah vouches for the roofer and approves, and the family remembers
+  him as a confirmed payee.
+config: ../voicestage.config.yaml
+
+steps:
+  # Start from a family that has not confirmed this payee yet, so the scenario
+  # gives the same result every time it is played.
+  - label: Setup. Forget Greenleaf Roofing if the family confirmed it before
+    device: phone
+    call: holdon_update_policy
+    args: { remove_trusted_payee: Greenleaf Roofing }
+    show: false
+
+  - device: kitchen
+    say: "The roofer, Greenleaf Roofing, wants a $1,500 deposit by check before he starts on the gutters next week."
+    script:
+      - skill: holdon-money-safety
+      - call: holdon_check_request
+        args:
+          description: "The roofer, Greenleaf Roofing, wants a $1,500 deposit by check before he starts on the gutters next week."
+          payee_name: Greenleaf Roofing
+          amount_usd: 1500
+          payment_method: check
+          contact_channel: in_person
+        save: check
+      - say: "{{check.say_to_user}}"
+      - call: holdon_place_hold
+        args:
+          check_id: "{{check.check_id}}"
+          summary: "Greenleaf Roofing asked for a $1,500 deposit by check before starting on the gutters next week."
+        save: hold
+      - say: "{{hold.say_to_user}}"
+    expect:
+      - tool: holdon_check_request
+        result: { verdict: unknown, next_step: place_hold, payee.status: not_in_registry }
+        save: check
+      - tool: holdon_place_hold
+        result: { status: pending_family, blocked: false }
+        save: hold
+      - not_tool: holdon_pay
+      - screen: ui://holdon/hold-card.html
+
+  - device: phone
+    wait_for: { event: hold.created, timeout: 15 }
+    expect:
+      - announced: "Margaret"
+      - tool: holdon_family_inbox
+        result: { holds.0.can_approve: true, holds.0.requires_trust_payee: true, holds.0.payee_status: not_in_registry }
+      - screen: ui://holdon/approval-card.html
+
+  - device: phone
+    say: "I know Greenleaf Roofing, they did the neighbors' roof. I trust them. Approve it."
+    script:
+      - call: holdon_family_decide
+        args:
+          hold_id: "{{hold.hold_id}}"
+          decision: approve
+          trust_payee: true
+          note: "I know them, Mom. They did the neighbors' roof."
+        save: decision
+      - say: "{{decision.say_to_user}}"
+    expect:
+      - tool: holdon_family_decide
+        args: { decision: approve, trust_payee: true }
+        result: { status: approved, trusted_payee_added: true, payee_status: family_trusted }
+
+  - device: kitchen
+    wait_for: { event: hold.decided, timeout: 15 }
+    expect:
+      - announced: "Sarah"
+      - tool: holdon_get_hold
+        result: { status: approved, next_step: pay }
+
+  - device: kitchen
+    say: "Good. Go ahead and pay the deposit."
+    script:
+      - call: holdon_pay
+        args: { hold_id: "{{hold.hold_id}}" }
+        save: receipt
+      - say: "{{receipt.say_to_user}}"
+    expect:
+      - tool: holdon_pay
+        result: { simulated: true, amount_usd: 1500, payee: Greenleaf Roofing, method: check }
+      - screen: ui://holdon/receipt-card.html

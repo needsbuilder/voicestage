@@ -1,0 +1,49 @@
+# The default stage: a kitchen display and a phone, both talking to the
+# built-in example MCP server ("Kitchen helper"). Start it with `npm run dev`.
+#
+# Copy this file and change it to point at your own MCP server and skills.
+# Full reference: README.md, "Configuration".
+
+name: Kitchen helper
+
+assistant:
+  # scripted | anthropic | bedrock | openai-compatible | claude-code
+  # "scripted" needs no model: it replays the lines in scenarios/example.
+  # VOICESTAGE_PROVIDER or --provider overrides this.
+  provider: scripted
+
+servers:
+  kitchen:
+    # The example server that ships with Voicestage. For your own server use:
+    #   url: http://localhost:3000/mcp
+    builtin: example
+    events:
+      # For your own server, add:  url: http://localhost:3000/events
+      announce:
+        - on: timer.done
+          devices: [display]
+          say: "Your {{timer.label}} timer is done."
+
+skills:
+  kitchen-helper: examples/skills/kitchen-helper
+
+devices:
+  - id: display
+    name: Kitchen display
+    kind: display # display | speaker | phone
+    person: { name: Alex }
+    servers: [kitchen]
+    skills: [kitchen-helper]
+
+  - id: phone
+    name: Phone
+    kind: phone
+    person: { name: Sam }
+    servers: [kitchen]
+    skills: [kitchen-helper]
+    hints:
+      - "Set a timer for the tea."
+      - "How do I make tomato soup?"
+
+scenarios:
+  - scenarios/example

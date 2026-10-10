@@ -1,0 +1,71 @@
+name: An "IRS agent" demands gift cards
+description: >
+  Margaret says a caller claiming to be the IRS wants $2,000 in gift cards
+  today and told her to keep it secret. Hold On stops the request, tells her
+  daughter, and Sarah denies it. No money can move.
+config: ../voicestage.config.yaml
+
+steps:
+  - device: kitchen
+    say: "A man from the IRS just called. He says I'll be arrested unless I pay $2,000 in gift cards today, and he told me not to tell anyone."
+    script:
+      - skill: holdon-money-safety
+      - call: holdon_check_request
+        args:
+          description: "A man who said he was from the IRS just called. He says I'll be arrested unless I pay $2,000 in gift cards today, and he told me not to tell anyone."
+          payee_name: IRS
+          amount_usd: 2000
+          payment_method: gift_card
+          contact_channel: phone_call
+          secrecy_requested: true
+          urgency_claims: [arrest_or_legal_threat, pay_immediately]
+        save: check
+      - say: "{{check.say_to_user}}"
+      - call: holdon_place_hold
+        args:
+          check_id: "{{check.check_id}}"
+          summary: "Someone claiming to be the IRS phoned and demanded $2,000 in gift cards today, threatened arrest, and said to keep it secret."
+        save: hold
+      - say: "{{hold.say_to_user}}"
+    expect:
+      - tool: holdon_check_request
+        args: { payment_method: gift_card }
+        result: { verdict: stop, next_step: place_hold, payee.status: mismatch, policy.blocked: true }
+        save: check
+      - tool: holdon_place_hold
+        result: { status: pending_family, blocked: true }
+        save: hold
+      - not_tool: holdon_pay
+      - screen: ui://holdon/hold-card.html
+      - said: "Sarah"
+
+  - device: phone
+    wait_for: { event: hold.created, timeout: 15 }
+    expect:
+      - announced: "Margaret"
+      - tool: holdon_family_inbox
+        result: { holds.0.blocked: true, holds.0.can_approve: false }
+      - screen: ui://holdon/approval-card.html
+
+  - device: phone
+    say: "Deny it. Tell her the real IRS sends letters, and that I'll call her tonight."
+    script:
+      - call: holdon_family_decide
+        args:
+          hold_id: "{{hold.hold_id}}"
+          decision: deny
+          note: "Mom, the real IRS sends letters. I'll call you tonight."
+        save: decision
+      - say: "{{decision.say_to_user}}"
+    expect:
+      - tool: holdon_family_decide
+        args: { decision: deny }
+        result: { status: denied }
+
+  - device: kitchen
+    wait_for: { event: hold.decided, timeout: 15 }
+    expect:
+      - announced: "Sarah"
+      - tool: holdon_get_hold
+        result: { status: denied, next_step: none }
+      - screen: ui://holdon/hold-card.html

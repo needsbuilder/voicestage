@@ -1,0 +1,79 @@
+name: A genuine electric bill
+description: >
+  Margaret asks to pay her Con Edison bill. The payee is on the registry of
+  official payees, the amount is over the family's limit, so the payment is
+  held. Sarah approves, the (simulated) payment is made and a receipt is shown.
+config: ../voicestage.config.yaml
+
+steps:
+  - device: kitchen
+    say: "My Con Edison bill came in the mail. It's $182.40. Please pay it with my card."
+    script:
+      - skill: holdon-money-safety
+      - call: holdon_check_request
+        args:
+          description: "My Con Edison bill came in the mail. It's $182.40. Please pay it with my card."
+          payee_name: Con Edison
+          amount_usd: 182.4
+          payment_method: card
+          contact_channel: mail
+        save: check
+      - say: "{{check.say_to_user}}"
+      - call: holdon_place_hold
+        args:
+          check_id: "{{check.check_id}}"
+          summary: "Con Edison electric bill, $182.40, by card. The bill came in the mail."
+        save: hold
+      - say: "{{hold.say_to_user}}"
+    expect:
+      - tool: holdon_check_request
+        result: { verdict: verified, next_step: place_hold, payee.status: verified }
+        save: check
+      - tool: holdon_place_hold
+        result: { status: pending_family, blocked: false }
+        save: hold
+      - not_tool: holdon_pay
+      - screen: ui://holdon/hold-card.html
+
+  - device: phone
+    wait_for: { event: hold.created, timeout: 15 }
+    expect:
+      - announced: "Margaret"
+      - tool: holdon_family_inbox
+        result: { holds.0.can_approve: true, holds.0.amount_usd: 182.4, holds.0.payee_status: verified }
+      - screen: ui://holdon/approval-card.html
+
+  - device: phone
+    say: "That's her usual electric bill. Approve it, and tell her it looks right."
+    script:
+      - call: holdon_family_decide
+        args:
+          hold_id: "{{hold.hold_id}}"
+          decision: approve
+          note: "Looks right, Mom."
+        save: decision
+      - say: "{{decision.say_to_user}}"
+    expect:
+      - tool: holdon_family_decide
+        args: { decision: approve }
+        result: { status: approved }
+
+  - device: kitchen
+    wait_for: { event: hold.decided, timeout: 15 }
+    expect:
+      - announced: "Sarah"
+      - tool: holdon_get_hold
+        result: { status: approved, next_step: pay }
+
+  - device: kitchen
+    say: "Yes, please pay it now."
+    script:
+      - call: holdon_pay
+        args: { hold_id: "{{hold.hold_id}}" }
+        save: receipt
+      - say: "{{receipt.say_to_user}}"
+    expect:
+      - tool: holdon_pay
+        result: { simulated: true, amount_usd: 182.4, payee: Con Edison, method: card }
+      - screen: ui://holdon/receipt-card.html
+      - said: "simulated"
