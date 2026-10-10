@@ -1,0 +1,49 @@
+# One of each kind of device, all talking to the built-in example server:
+#   npm run dev -- --config examples/three-devices.config.yaml
+#
+# The speaker has no screen. It gets the same tool results; they are only
+# spoken, and a question from the server is asked aloud.
+
+name: Three devices
+
+assistant:
+  provider: scripted
+
+servers:
+  kitchen:
+    builtin: example
+    events:
+      announce:
+        - on: timer.done
+          devices: [speaker]
+          say: "Your {{timer.label}} timer is done."
+
+skills:
+  kitchen-helper: skills/kitchen-helper
+
+devices:
+  - id: display
+    name: Kitchen display
+    kind: display
+    person: { name: Alex }
+    servers: [kitchen]
+    skills: [kitchen-helper]
+
+  - id: speaker
+    name: Bedroom speaker
+    kind: speaker
+    person: { name: Jo }
+    servers: [kitchen]
+    skills: [kitchen-helper]
+    # A speaker waits to be asked before reading a notification.
+    announcements: { mode: indicator }
+
+  - id: phone
+    name: Phone
+    kind: phone
+    person: { name: Sam }
+    servers: [kitchen]
+    skills: [kitchen-helper]
+
+scenarios:
+  - ../scenarios/example

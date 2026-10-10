@@ -229,7 +229,7 @@ export class Device {
       headers: server.headers,
       protocol: server.protocol,
       timeoutMs: server.timeoutMs,
-      onStatus: () => this.patch({ servers: this.serverSnapshots() }),
+      onStatus: () => this.patch({ servers: this.serverSnapshots(), hints: this.hints() }),
       onElicitation: (request) => this.onElicitation(request),
       onNotification: (method, params) => this.onServerEvent(server.id, 'mcp', method, params),
     });
@@ -375,11 +375,14 @@ export class Device {
     };
   }
 
-  /** Things to try: from the configuration, else the first lines of the loaded scenarios for this device. */
+  /** Things to try: from the configuration, else lines from the loaded scenarios that this device can replay. */
   private hints(): string[] {
     if (this.config.hints.length > 0) return this.config.hints;
-    const lines = this.host.scriptedLines().filter((line) => line.deviceId === this.id);
-    return [...new Set(lines.map((line) => line.text))].slice(0, 3);
+    const lines = this.host.scriptedLines();
+    const own = lines.filter((line) => line.deviceId === this.id);
+    const routes = this.routes();
+    const usable = own.length > 0 ? own : lines.filter((line) => line.script.every((action) => action.call === undefined || routes.has(action.call)));
+    return [...new Set(usable.map((line) => line.text))].slice(0, 3);
   }
 
   get providerInfo(): ProviderSummary {
@@ -544,6 +547,12 @@ export class Device {
       return { content: [{ type: 'text', text: `Error (unknown_tool): Server "${server}" has no tool called "${toolName}".` }], isError: true };
     }
     const { result } = await this.invoke({ server, tool }, args, origin, `${origin}-${randomUUID().slice(0, 8)}`);
+    if (origin === 'card' && this.screen?.card && this.screen.server === server && tool.uiResourceUri === this.screen.card.uri) {
+      // The card on screen has moved on (it asked for this result and redrew itself).
+      // Remember where it is now, under the same id, so a reloaded page shows the same thing.
+      this.screen = { ...this.screen, tool, arguments: args, result };
+      this.patch({ screen: this.screen });
+    }
     if (origin === 'card') {
       // The person acted on the screen. Put it in the conversation so the assistant knows.
       const id = `card_${randomUUID().slice(0, 8)}`;

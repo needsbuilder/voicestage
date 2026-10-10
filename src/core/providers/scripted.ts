@@ -9,7 +9,8 @@
  *
  * When a scenario is playing, each step hands over its own script. When a
  * person just talks to a scripted device, their words are matched against the
- * lines of the loaded scenarios for that device.
+ * lines of the loaded scenarios: first the lines written for that device, then
+ * any other line whose tools the device has.
  */
 import { bestLineMatch } from '../../shared/speech.js';
 import { getPath, renderText, renderValue, TemplateError } from '../../shared/template.js';
@@ -41,8 +42,14 @@ export class ScriptedProvider implements Provider {
     let script = ctx.script;
     let source = 'the scenario step';
     if (!script) {
-      const candidates = this.lines().filter((line) => line.deviceId === ctx.deviceId);
-      const match = bestLineMatch(ctx.userText, candidates.map((line) => ({ text: line.text, item: line })));
+      // Lines written for this device come first. A line written for another device
+      // can be replayed here too, as long as this device has every tool it calls.
+      const available = new Set(ctx.tools.map((tool) => tool.name));
+      const usable = this.lines().filter((line) => line.deviceId === ctx.deviceId || line.script.every((action) => action.call === undefined || available.has(action.call)));
+      const own = usable.filter((line) => line.deviceId === ctx.deviceId);
+      const toItems = (lines: ScriptedLine[]) => lines.map((line) => ({ text: line.text, item: line }));
+      const match = bestLineMatch(ctx.userText, toItems(own)) ?? bestLineMatch(ctx.userText, toItems(usable));
+      const candidates = own.length > 0 ? own : usable;
       if (!match) {
         const example = candidates[0]?.text;
         const text = example
