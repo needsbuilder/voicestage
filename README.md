@@ -48,7 +48,7 @@ With no model configured, use the inspector to call tools and see their cards. T
 | | |
 | --- | --- |
 | **Devices and people** | A configuration file defines devices (smart display, speaker with no screen, phone), who uses each, and which servers and skills each loads. Every device makes its own MCP connection with its own HTTP headers, so two people with two tokens can be on stage together. |
-| **Voice** | Speech in through the browser's Web Speech API (hold to talk, tap to toggle, or a wake word), speech out through speech synthesis. Everything can be typed instead, and captions are always shown. Works with no microphone and with the sound off. |
+| **Voice** | Speech in through the browser's Web Speech API (hold to talk, tap to toggle, or a wake word), speech out through speech synthesis, with a voice menu for choosing who sounds like what. Everything can be typed instead, and captions are always shown. Works with no microphone and with the sound off, and says in plain words when the microphone or the sound cannot be used and why. See [Voice](#voice). |
 | **Assistant** | One agent loop per device, with a pluggable provider: `anthropic`, `bedrock`, `openai-compatible`, `claude-code` (a local Claude Code login, no key), or `scripted` (no model). |
 | **MCP client** | The official `@modelcontextprotocol/client` v2 over Streamable HTTP. Protocol 2025-11-25 with a session by default (2026-07-28 on request). Tools, structured output, progress notifications, form elicitation, resource reads, list-changed and logging notifications. The negotiated protocol version is shown in the inspector. |
 | **MCP Apps** | When a tool links a `ui://` card, the card is rendered on the device screen in a sandboxed iframe using the official host bridge (`AppBridge` from `@modelcontextprotocol/ext-apps`). Tool calls and resource reads made by the card go back through the host to the card's own server. A tool result with no card gets a clean default card drawn from its structured content. |
@@ -116,7 +116,7 @@ devices:
   - id: kitchen                # used in scenarios and announce rules
     name: Kitchen display
     kind: display              # display | speaker | phone
-    person: { name: Margaret, role: the account owner }
+    person: { name: Margaret, role: the account owner, voice: { name: Moira } }   # voice: for her lines when a scenario is played
     servers:
       - id: shop
         headers: { Authorization: "Bearer ${MARGARET_TOKEN}" }   # this device's own headers
@@ -198,6 +198,42 @@ The exit code is 0 when every scenario passes. In the UI, pick a scenario in the
 
 In scripted mode a device also answers free speech: what you say is matched against the lines of the loaded scenarios (loosely, so speech recognition does not have to be perfect) and the matching script is replayed. A line written for one device can be replayed on any device that has the tools it calls.
 
+## Voice
+
+Voice is the browser's Web Speech API, so what you get depends on the browser and the operating system. This is what Voicestage does about that, and what was observed in Google Chrome 154 on macOS with `npm run voice:check` (below).
+
+**Speaking.**
+
+- A browser's default voice follows the system language, not the page: a Mac set to Korean reads English text with a Korean voice. And a Mac offers about forty English voices, most of them novelties. So Voicestage chooses by name: a clear voice that runs on the computer, a different one for each device, and for the person at each device (when a scenario speaks their lines) one that no device uses. On a Mac with the standard voices that is Samantha for the first device, Daniel for the second, and Moira and Tessa for the people.
+- The **voice menu** in the top bar (the icon next to the loudspeaker) changes any of them and plays a sample. Choices are remembered in the browser. `voice.name` on a device or a person in the configuration sets the default for everyone; a name the browser does not have falls back to the automatic choice.
+- Chrome will not speak until the page has had a click or a key press: `speechSynthesis.speak()` fails with `not-allowed`. Voicestage then shows a notice under the top bar ("Sound is waiting for you..."), keeps showing each line for as long as it would take to say, and starts speaking with the next line after a click.
+- Each sentence is one utterance, and its caption is put up when the utterance starts. Lines never overlap: devices take turns through one queue. A tab in the background keeps speaking. Talking or typing over a device stops it mid-sentence.
+
+**Listening.**
+
+- Recognition runs in continuous mode, and Voicestage decides when you have finished (a pause of about 1.3 seconds, or the second tap, or letting go of the button). Chrome's single-phrase mode returned only the last phrase of a request with a pause in it.
+- While a device listens, the ring around its microphone button follows the level of the sound coming in.
+- When the microphone cannot be used, a notice under the top bar says why, and typing keeps working:
+
+| What happened | What Chrome reports | What Voicestage says |
+| --- | --- | --- |
+| The site may not use the microphone | `not-allowed` | "The browser is blocking the microphone for this page. Click the icon at the left of the address bar, allow the microphone, and try again." Shown as soon as the page opens, when the block is already in place. |
+| The recognition service cannot be reached | `network` | "Speech recognition could not reach its online service, so speech cannot be turned into text right now. Check the internet connection." |
+| The microphone gives nothing but zeros (muted, or switched off for the browser by the operating system) | nothing; later `no-speech` | "The microphone is sending pure silence. It may be muted, or switched off for this browser in the system's privacy settings." |
+| Nobody said anything | `no-speech` after about 8 seconds | The device shows "I didn't hear anything." and stops listening. |
+| No microphone | `audio-capture` | "No microphone was found. Connect one, or choose one in the browser's site settings." |
+| The browser has no recognition (Firefox) | no `SpeechRecognition` | "This browser has no speech recognition. Chrome, Edge and Safari do." The microphone buttons are disabled. |
+
+Chrome sends the audio to Google's recognition service. On lines spoken by the macOS `say` command, it heard the twelve spoken lines of the shipped scenarios well enough for all twelve to be matched to the right script, with small slips ("the roofer" came back as "the river").
+
+### Checking voice in a real browser
+
+```bash
+npm run build && npm run voice:check
+```
+
+This opens visible Google Chrome windows (not a bundled Chromium, which has no recognition service) and makes sound. It records every utterance and caption change with timestamps and checks that speech is refused before a click and explained, that captions and audio stay in step, that nothing overlaps or is cut off, that a background tab keeps going, and that an interruption works. For listening it replaces the microphone with lines spoken by `say`, fed to the recogniser as an audio track, and checks a spoken request, a two-sentence request, a question answered by voice, the wake word, silence, a blocked microphone and an unreachable service. A real microphone still has to be tried by a person.
+
 ## MCP Apps on the device screen
 
 A tool that carries `_meta.ui.resourceUri` gets its card. Voicestage reads the `ui://` resource through the device's MCP connection, and the browser loads it like this:
@@ -264,6 +300,7 @@ npm run typecheck
 | `test/skills.test.ts` | Skill parsing and loading, warnings, reading skill files safely, the prompt section and built-in tools |
 | `test/scenario.test.ts` | Scenario parsing and error messages, every kind of expectation, the report |
 | `test/template.test.ts`, `test/speech.test.ts` | Placeholders and matching; matching speech to lines; answering a form elicitation by voice |
+| `test/voices.test.ts` | Which voice each device and person gets; the plain-words explanation for each microphone error; the wake word |
 | `test/default-card.test.ts` | The default card for structured, text-only and error results; the card sandbox policy |
 | `test/providers.test.ts` | Each provider's settings and error messages; the scripted provider; the tool loop; the Anthropic, Bedrock and OpenAI-compatible request shapes against fake clients |
 | `test/events.test.ts` | The server-sent events parser and client, reconnection with `Last-Event-ID` |
@@ -272,7 +309,7 @@ npm run typecheck
 | `test/timer-card.test.ts` | The example card driven by the official `AppBridge` in jsdom |
 | `test/holdon.e2e.test.ts` | Starts a Hold On server on a free port and plays its three scenarios in scripted mode through the real client. Skipped unless a built Hold On checkout is at `../holdon` or `HOLDON_DIR`. |
 
-`npm run screenshots` retakes the pictures in `docs/screenshots` with headless Chrome.
+`npm run screenshots` retakes the pictures in `docs/screenshots` with headless Chrome. `npm run voice:check` checks speech and recognition in a visible Google Chrome; see [Voice](#voice).
 
 ## How it is put together
 
@@ -301,8 +338,8 @@ The stage server holds the MCP connections and runs the assistants, because mode
 ## Limitations
 
 - **It is a stand-in, not an emulator.** How a real assistant chooses tools, phrases things, lays out cards or delivers notifications will differ. Use Voicestage to develop and demonstrate; test on the real platform when you can.
-- **Speech recognition is the browser's.** It needs Chrome, Edge or Safari and a microphone permission, and in Chrome the audio is processed by the browser vendor's service. Typing always works. The wake word is matched in the recognised text, not detected on the audio.
-- **Voices are the browser's too.** Which ones exist depends on the operating system. Browsers will not speak until the page has been clicked once; until then lines are shown without sound.
+- **Speech recognition is the browser's.** It needs Chrome, Edge or Safari and a microphone permission, and in Chrome the audio is processed by the browser vendor's online service. Typing always works. The wake word is matched in the recognised text, not detected on the audio. Recognition has been checked with synthetic speech fed to Chrome's recogniser, not with a person at a microphone.
+- **Voices are the browser's too.** Which ones exist depends on the operating system, and the automatic choice knows the common macOS, Windows and Chrome voice names, not every system's. Browsers will not speak until the page has been clicked once; until then lines are shown without sound, and a notice says so. Voice has been checked in Google Chrome on macOS only.
 - **Cards are sandboxed with an iframe attribute and a policy**, not a separate origin. See [MCP Apps on the device screen](#mcp-apps-on-the-device-screen).
 - **Form elicitation only.** URL-mode elicitation is declined. Sampling and roots are not offered to servers.
 - **Streamable HTTP only.** No stdio servers, and no OAuth flow: put a token in a header.

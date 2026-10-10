@@ -107,7 +107,8 @@ const DeviceSchema = z
     id: z.string().regex(/^[a-z0-9][a-z0-9_-]*$/i, 'Device ids use letters, digits, "-" and "_".'),
     name: z.string().min(1).optional(),
     kind: z.enum(DEVICE_KINDS).default('display'),
-    person: z.union([z.string().min(1), z.object({ name: z.string().min(1), role: z.string().optional() }).strict()]).optional(),
+    /** Who uses the device. `voice` is the voice their lines are spoken with when a scenario is played. */
+    person: z.union([z.string().min(1), z.object({ name: z.string().min(1), role: z.string().optional(), voice: VoiceSchema.omit({ lang: true }).optional() }).strict()]).optional(),
     servers: z.array(DeviceServerSchema).default([]),
     /** Skill names from the top-level `skills` map, or paths to skill folders. */
     skills: z.array(z.string().min(1)).default([]),
@@ -147,7 +148,7 @@ export interface ResolvedDevice {
   id: string;
   name: string;
   kind: (typeof DEVICE_KINDS)[number];
-  person: { name: string; role?: string };
+  person: { name: string; role?: string; voice?: { name?: string; rate?: number; pitch?: number } };
   servers: ResolvedDeviceServer[];
   /** Absolute paths of skill folders. */
   skillPaths: string[];

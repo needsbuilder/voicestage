@@ -7,12 +7,16 @@
  */
 import { useSyncExternalStore } from 'react';
 import type { DeviceSnapshot, ScenarioRunState, StageEvent, StageSnapshot, TimelineEntry } from '../../src/shared/types';
+import { describeMicProblem, type MicProblem, type VoiceInfo } from '../../src/shared/voices';
 import { api } from './api';
-import { listen, splitSentences, voice, type Listening } from './voice';
+import { listen, microphonePermission, splitSentences, voice, watchMicrophone, type Listening, type SoundState, type VoicePrefs } from './voice';
 
 export interface Caption {
-  /** What the person last said, or is saying. */
-  user?: { text: string; state: 'listening' | 'typing' | 'said' };
+  /**
+   * What the person last said, or is saying. `opening`: the microphone is being
+   * opened. `missed`: the device listened and heard nothing.
+   */
+  user?: { text: string; state: 'opening' | 'listening' | 'typing' | 'said' | 'missed' };
   /** The sentence the device is saying, or said last. */
   assistant?: { text: string; speaking: boolean };
 }
@@ -25,6 +29,8 @@ export interface Settings {
   inspector: boolean;
   inspectorDevice: string | undefined;
   inspectorTab: 'timeline' | 'connections' | 'scenario';
+  /** Voices picked in the voice menu, by device id. They win over the configuration file. */
+  voiceChoice: Record<string, { assistant?: string; person?: string }>;
 }
 
 export interface UiState {
@@ -34,18 +40,23 @@ export interface UiState {
   captions: Record<string, Caption>;
   settings: Settings;
   listening: { deviceId: string; mode: 'talk' | 'wake' } | null;
-  micError: string | null;
+  /** Why the microphone cannot be used, when it cannot. Stays until it works again. */
+  mic: MicProblem | null;
+  /** Every voice the browser offers. Empty until the browser has loaded its list. */
+  voices: VoiceInfo[];
+  /** Whether sound is coming out, and if not, why. */
+  sound: SoundState;
   toast: string | null;
 }
 
 const SETTINGS_KEY = 'voicestage.settings';
 
 function loadSettings(): Settings {
-  const defaults: Settings = { voice: true, voicePeople: true, inspector: true, inspectorDevice: undefined, inspectorTab: 'timeline' };
+  const defaults: Settings = { voice: true, voicePeople: true, inspector: true, inspectorDevice: undefined, inspectorTab: 'timeline', voiceChoice: {} };
   try {
     const stored = JSON.parse(localStorage.getItem(SETTINGS_KEY) ?? '{}') as Partial<Settings>;
     const params = new URLSearchParams(location.search);
-    const merged = { ...defaults, ...stored };
+    const merged = { ...defaults, ...stored, voiceChoice: { ...stored.voiceChoice } };
     // URL switches, handy for screenshots and recordings: ?inspector=0&voice=0&tab=scenario&device=phone
     if (params.has('inspector')) merged.inspector = params.get('inspector') !== '0';
     if (params.has('voice')) merged.voice = params.get('voice') !== '0';
@@ -65,10 +76,14 @@ let state: UiState = {
   captions: {},
   settings: loadSettings(),
   listening: null,
-  micError: null,
+  mic: null,
+  voices: [],
+  sound: 'ok',
   toast: null,
 };
 voice.enabled = state.settings.voice;
+state.sound = voice.soundState;
+state.voices = voice.voiceList();
 
 const subscribers = new Set<() => void>();
 
@@ -102,6 +117,17 @@ function setCaption(deviceId: string, change: Partial<Caption>): void {
 
 function deviceIndex(deviceId: string): number {
   return Math.max(0, state.stage?.devices.findIndex((device) => device.id === deviceId) ?? 0);
+}
+
+/** Voice settings for a device's assistant, or for the person at it: the voice menu first, then the configuration. */
+export function voicePrefs(device: DeviceSnapshot, role: 'assistant' | 'person'): VoicePrefs {
+  const configured = role === 'assistant' ? device.voice : { lang: device.voice.lang, ...device.person.voice };
+  const chosen = state.settings.voiceChoice[device.id]?.[role];
+  return chosen ? { ...configured, name: chosen } : configured;
+}
+
+function voiceSlot(deviceId: string): { slot: number; slots: number } {
+  return { slot: deviceIndex(deviceId), slots: state.stage?.devices.length ?? 1 };
 }
 
 function captionsFrom(stage: StageSnapshot, existing: Record<string, Caption>): Record<string, Caption> {
@@ -158,8 +184,8 @@ function apply(event: StageEvent): void {
         deviceId: event.deviceId,
         text: event.text,
         role: 'assistant',
-        deviceIndex: deviceIndex(event.deviceId),
-        prefs: device?.voice,
+        ...voiceSlot(event.deviceId),
+        prefs: device ? voicePrefs(device, 'assistant') : undefined,
         onSentence: (sentence) => {
           const current = state.captions[event.deviceId]?.assistant;
           if (sentence !== null) setCaption(event.deviceId, { assistant: { text: sentence, speaking: true } });
@@ -177,7 +203,8 @@ function apply(event: StageEvent): void {
         void api.cueDone(event.id);
       };
       if (state.settings.voicePeople && state.settings.voice) {
-        voice.speak({ deviceId: event.deviceId, text: event.text, role: 'person', deviceIndex: deviceIndex(event.deviceId), onSentence: () => undefined, onDone: finish });
+        const device = state.stage?.devices.find((candidate) => candidate.id === event.deviceId);
+        voice.speak({ deviceId: event.deviceId, text: event.text, role: 'person', ...voiceSlot(event.deviceId), prefs: device ? voicePrefs(device, 'person') : undefined, onSentence: () => undefined, onDone: finish });
       } else {
         window.setTimeout(finish, Math.min(4500, 700 + event.text.length * 32));
       }
@@ -198,6 +225,14 @@ let source: EventSource | undefined;
 
 export function connect(): void {
   if (source) return;
+  // The voice list arrives a moment after the page loads, and sound can be refused until the first click.
+  voice.subscribe(() => set({ voices: voice.voiceList(), sound: voice.soundState }));
+  // Say so up front when the browser already blocks the microphone for this page.
+  const permission = (current: PermissionState | undefined) => {
+    if (current === 'denied') set({ mic: describeMicProblem('not-allowed') });
+    else if (state.mic?.kind === 'blocked') set({ mic: null });
+  };
+  void microphonePermission(permission).then(permission);
   source = new EventSource('/api/stream');
   source.onopen = () => set({ connected: true, everConnected: true });
   source.onerror = () => set({ connected: false });
@@ -217,6 +252,7 @@ export function updateSettings(change: Partial<Settings>): void {
   set({ settings });
   voice.enabled = settings.voice;
   if (!settings.voice) voice.cancel();
+  set({ sound: voice.soundState });
   try {
     localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
   } catch {
@@ -238,51 +274,100 @@ export function say(deviceId: string, text: string, source: 'typed' | 'voice' = 
 }
 
 let listening: Listening | undefined;
+let stopMeter: (() => void) | undefined;
 
 export function stopListening(deliver = true): void {
   if (deliver) listening?.stop();
   else listening?.abort();
 }
 
-/** Start listening on a device. `talk` takes one phrase; `wake` keeps listening for the wake word. */
+function setMicLevel(level: number): void {
+  document.documentElement.style.setProperty('--mic-level', level.toFixed(2));
+}
+
+/**
+ * Start listening on a device. `talk` takes one request, however many
+ * sentences it has, and ends when the person pauses or `stopListening` is
+ * called. `wake` keeps listening for requests that start with the wake word.
+ */
 export function startListening(deviceId: string, mode: 'talk' | 'wake'): void {
   if (state.listening) stopListening(false);
   const device = state.stage?.devices.find((candidate) => candidate.id === deviceId);
   if (!device) return;
+  // Starting to talk interrupts whatever the device was saying.
   voice.cancel(deviceId);
-  const wake = device.wakeWord.toLowerCase();
+  let silent = false;
   const started = listen({
     lang: device.voice.lang ?? 'en-US',
-    continuous: mode === 'wake',
-    onInterim: (text) => {
-      if (mode === 'talk' || text.toLowerCase().includes(wake)) setCaption(deviceId, { user: { text, state: 'listening' }, assistant: undefined });
+    mode,
+    wakeWord: device.wakeWord,
+    onListening: () => {
+      if (mode === 'talk' && state.captions[deviceId]?.user?.state === 'opening') setCaption(deviceId, { user: { text: '', state: 'listening' } });
+      stopMeter?.();
+      stopMeter = watchMicrophone({
+        onLevel: setMicLevel,
+        onSilent: () => {
+          silent = true;
+          set({ mic: describeMicProblem('silent') });
+        },
+      });
     },
-    onFinal: (text) => {
-      if (mode === 'talk') return say(deviceId, text, 'voice');
-      // Wake mode: only phrases that contain the wake word count, and the word itself is dropped.
-      const index = text.toLowerCase().indexOf(wake);
-      if (index < 0) return;
-      const request = text.slice(index + wake.length).replace(/^[\s,.!?]+/, '');
-      if (request) say(deviceId, request, 'voice');
+    onInterim: (text) => setCaption(deviceId, { user: { text, state: 'listening' }, assistant: undefined }),
+    onRequest: (text) => {
+      if (state.mic) set({ mic: null });
+      say(deviceId, text, 'voice');
     },
-    onEnd: (error) => {
+    onEnd: ({ nothingHeard, problem }) => {
       listening = undefined;
+      stopMeter?.();
+      stopMeter = undefined;
       const wasWake = state.listening?.mode === 'wake' && state.listening.deviceId === deviceId;
-      set({ listening: null, micError: error ?? null });
-      if (error) showToast(error);
-      // Browsers end continuous recognition after a pause; wake mode starts it again.
-      else if (wasWake && mode === 'wake') window.setTimeout(() => !state.listening && startListening(deviceId, 'wake'), 250);
+      set({ listening: null, ...(problem ? { mic: problem } : {}) });
+      const caption = state.captions[deviceId]?.user;
+      if (problem || silent) {
+        // The reason is shown under the device until the microphone works again.
+        if (caption && caption.state !== 'said') setCaption(deviceId, { user: undefined });
+        return;
+      }
+      if (mode === 'talk' && nothingHeard) {
+        setCaption(deviceId, { user: { text: "I didn't hear anything.", state: 'missed' } });
+        window.setTimeout(() => state.captions[deviceId]?.user?.state === 'missed' && setCaption(deviceId, { user: undefined }), 4000);
+        return;
+      }
+      if (caption?.state === 'listening' || caption?.state === 'opening') setCaption(deviceId, { user: undefined });
+      // Browsers end continuous recognition after a quiet spell; wake mode starts it again.
+      if (wasWake) window.setTimeout(() => !state.listening && startListening(deviceId, 'wake'), 250);
     },
   });
   if (!started) return;
   listening = started;
-  set({ listening: { deviceId, mode }, micError: null });
-  if (mode === 'talk') setCaption(deviceId, { user: { text: '', state: 'listening' }, assistant: undefined });
+  set({ listening: { deviceId, mode } });
+  if (mode === 'talk') setCaption(deviceId, { user: { text: '', state: 'opening' }, assistant: undefined });
+}
+
+/** Hide the microphone notice. It comes back if the microphone fails again. */
+export function dismissMicProblem(): void {
+  set({ mic: null });
 }
 
 export function stopWake(): void {
   set({ listening: null });
   stopListening(false);
+}
+
+/** Choose a voice for a device in the voice menu. An empty name goes back to the configured or automatic voice. */
+export function chooseDeviceVoice(deviceId: string, role: 'assistant' | 'person', name: string): void {
+  const current = state.settings.voiceChoice[deviceId] ?? {};
+  updateSettings({ voiceChoice: { ...state.settings.voiceChoice, [deviceId]: { ...current, [role]: name || undefined } } });
+}
+
+/** Say a short sample with the voice a device (or the person at it) currently has. */
+export function previewVoice(deviceId: string, role: 'assistant' | 'person'): void {
+  const device = state.stage?.devices.find((candidate) => candidate.id === deviceId);
+  if (!device) return;
+  voice.cancel(`preview:${deviceId}`);
+  const text = role === 'assistant' ? `This is the voice of the ${device.name}.` : `And this is ${device.person.name}.`;
+  voice.speak({ deviceId: `preview:${deviceId}`, text, role, ...voiceSlot(deviceId), prefs: voicePrefs(device, role), onSentence: () => undefined, onDone: () => undefined });
 }
 
 export function runOf(stage: StageSnapshot | null): ScenarioRunState | null {

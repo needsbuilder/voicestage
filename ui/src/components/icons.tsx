@@ -83,6 +83,12 @@ export const WakeIcon = (props: SVGProps<SVGSVGElement>) => (
     <path d="M3.500 12h2.500M8.500 8v8M12 5v14M15.500 8v8M18 12h2.500" />
   </Icon>
 );
+export const VoiceIcon = (props: SVGProps<SVGSVGElement>) => (
+  <Icon {...props}>
+    <circle cx="9" cy="8" r="3.2" />
+    <path d="M3.500 19.500c0-3 2.500-5 5.500-5s5.500 2 5.500 5M16.500 7.500a4 4 0 0 1 0 5M19 5a7.500 7.500 0 0 1 0 10" />
+  </Icon>
+);
 export const Logo = (props: SVGProps<SVGSVGElement>) => (
   <svg viewBox="0 0 32 32" width="1em" height="1em" aria-hidden="true" focusable="false" {...props}>
     <rect width="32" height="32" rx="8" fill="#161b26" />

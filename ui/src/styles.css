@@ -114,10 +114,11 @@ code {
 
 /* --- layout ------------------------------------------------------------------ */
 
+/* Rows: the top bar, notices (only when something about voice needs saying), the stage. */
 .app {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  grid-template-rows: 60px minmax(0, 1fr);
+  grid-template-rows: 60px auto minmax(0, 1fr);
   height: 100dvh;
 }
 
@@ -330,6 +331,8 @@ code {
 /* --- stage -------------------------------------------------------------------- */
 
 .stage {
+  grid-column: 1;
+  grid-row: 3;
   position: relative;
   container-type: size;
   min-width: 0;
@@ -1464,7 +1467,8 @@ code {
   background: #232a39;
 }
 
-.mic.is-on {
+.mic.is-on,
+.mic.is-on:hover:not(:disabled) {
   background: linear-gradient(140deg, var(--voice-a), var(--voice-b));
   color: #06121a;
   border-color: transparent;
@@ -1512,6 +1516,8 @@ code {
 /* --- inspector ---------------------------------------------------------------------------- */
 
 .inspector {
+  grid-column: 2;
+  grid-row: 2 / 4;
   display: flex;
   flex-direction: column;
   min-height: 0;
@@ -2204,10 +2210,12 @@ code {
 @media (max-width: 1100px) {
   .app--inspecting {
     grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: 60px minmax(0, 1.2fr) minmax(0, 1fr);
+    grid-template-rows: 60px auto minmax(0, 1.2fr) minmax(0, 1fr);
   }
 
   .inspector {
+    grid-column: 1;
+    grid-row: 4;
     border-left: 0;
     border-top: 1px solid var(--line);
   }
@@ -2222,10 +2230,11 @@ code {
     overflow: auto;
   }
 
-  .app {
+  .app,
+  .app--inspecting {
     height: auto;
     min-height: 100dvh;
-    grid-template-rows: auto auto;
+    grid-template-rows: auto auto auto auto;
   }
 
   .topbar {
@@ -2262,4 +2271,135 @@ code {
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
   }
+}
+
+/* --- voice: notices, the voice menu, microphone feedback ---------------------------------------- */
+
+/* In the page flow, between the top bar and the stage, so that it never covers a device. */
+.notices {
+  grid-column: 1;
+  grid-row: 2;
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+  background: rgba(246, 181, 76, 0.3);
+  border-bottom: 1px solid rgba(246, 181, 76, 0.3);
+}
+
+.notice-line {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin: 0;
+  padding: 8px 18px;
+  background: #251c0a;
+  color: #f7e3bd;
+  font-size: 13.5px;
+  line-height: 1.45;
+}
+
+.notice-line strong {
+  flex: none;
+  font-size: 11.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--warn);
+}
+
+.notice-line span {
+  flex: 1;
+}
+
+.notice-line .link {
+  flex: none;
+  color: var(--ink);
+}
+
+.voice-menu {
+  position: relative;
+}
+
+.voice-menu__panel {
+  position: absolute;
+  top: calc(100% + 10px);
+  right: 0;
+  z-index: 40;
+  width: min(430px, calc(100vw - 24px));
+  max-height: calc(100dvh - 90px);
+  overflow: hidden auto;
+  padding: 14px 16px 12px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: #141822;
+  box-shadow: 0 24px 60px -18px rgba(0, 0, 0, 0.85);
+}
+
+.voice-menu__panel h2 {
+  margin: 0 0 4px;
+  font-size: 15px;
+}
+
+.voice-menu__panel h3 {
+  margin: 12px 0 6px;
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+
+.voice-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 4px;
+  margin-bottom: 9px;
+}
+
+.voice-row label {
+  font-size: 13px;
+  color: var(--ink-soft);
+}
+
+.voice-row__pick {
+  display: flex;
+  gap: 6px;
+}
+
+.voice-row select {
+  flex: 1;
+  min-width: 0;
+  height: 36px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--bg);
+}
+
+.voice-row .icon-button {
+  flex: none;
+  font-size: 15px;
+  border-color: var(--line);
+}
+
+.voice-menu__note {
+  margin: 10px 0 0;
+  font-size: 12.5px;
+  color: var(--ink-faint);
+}
+
+/* While listening, the ring around the microphone button follows the level of the sound coming in. */
+.mic.is-on,
+.mic.is-on:hover:not(:disabled) {
+  box-shadow: 0 0 0 calc(5px + var(--mic-level, 0) * 14px) rgba(94, 231, 223, 0.2);
+}
+
+.mic.has-problem:not(.is-on) {
+  border-color: rgba(246, 181, 76, 0.7);
+  color: var(--warn);
+}
+
+.captions__user--opening,
+.captions__user--missed {
+  color: var(--screen-soft);
+  font-style: italic;
 }

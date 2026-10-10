@@ -188,7 +188,9 @@ export function startScenario(host: ScenarioHost, scenario: Scenario, options: R
       }
       device.clearQueuedAnswers();
       const answers = step.when_asked === undefined ? [] : Array.isArray(step.when_asked) ? step.when_asked : [step.when_asked];
-      for (const answer of answers) device.queueAnswer(typeof answer === 'string' ? answer : (renderValue(answer, host.vars) as { content?: JsonObject; action?: 'decline' | 'cancel' }));
+      // When paced, a spoken answer is cued like any other line of the person, so it can be seen and heard.
+      const cue = options.paced && options.beforeSay ? (text: string) => options.beforeSay!(device.id, text) : undefined;
+      for (const answer of answers) device.queueAnswer(typeof answer === 'string' ? answer : (renderValue(answer, host.vars) as { content?: JsonObject; action?: 'decline' | 'cancel' }), cue);
       if (options.paced) await options.beforeSay?.(device.id, step.say!);
       record = await device.hear(step.say!, { source: 'scenario', script: options.mode === 'scripted' ? step.script : undefined, scripted: options.mode === 'scripted' });
       device.clearQueuedAnswers();

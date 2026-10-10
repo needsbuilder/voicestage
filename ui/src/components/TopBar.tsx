@@ -4,6 +4,7 @@ import { api } from '../api';
 import { showToast, updateSettings, useStage } from '../store';
 import { voice } from '../voice';
 import { Logo, MuteIcon, NextIcon, PanelIcon, PlayIcon, ResetIcon, SpeakerIcon, StopIcon } from './icons';
+import { VoiceMenu } from './VoiceMenu';
 
 const fail = (error: unknown) => showToast(error instanceof Error ? error.message : String(error));
 
@@ -134,6 +135,7 @@ export function TopBar() {
           <input type="checkbox" checked={settings.voicePeople} onChange={(event) => updateSettings({ voicePeople: event.target.checked })} />
           Speak people&rsquo;s lines
         </label>
+        <VoiceMenu />
         <button type="button" className={`icon-button${settings.voice ? ' is-on' : ''}`} aria-pressed={settings.voice} aria-label={settings.voice ? 'Sound is on. Switch to captions only' : 'Captions only. Switch sound on'} title={settings.voice ? 'Sound on' : 'Captions only'} onClick={() => updateSettings({ voice: !settings.voice })}>
           {settings.voice ? <SpeakerIcon /> : <MuteIcon />}
         </button>

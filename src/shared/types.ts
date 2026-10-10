@@ -135,7 +135,7 @@ export interface DeviceSnapshot {
   id: string;
   name: string;
   kind: DeviceKind;
-  person: { name: string; role?: string };
+  person: { name: string; role?: string; voice?: { name?: string; rate?: number; pitch?: number } };
   /** Word that starts a hands-free request when wake mode is on. */
   wakeWord: string;
   /** Speech synthesis preferences for this device's assistant voice. */

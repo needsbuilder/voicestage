@@ -160,7 +160,7 @@ export class Device {
   private eventSeq = 0;
   private readonly eventWaiters = new Set<(event: ReceivedEvent) => void>();
   /** Answers queued by a scenario for the next question a server asks. */
-  private readonly scriptedAnswers: Array<string | { content?: JsonObject; action?: 'decline' | 'cancel' }> = [];
+  private readonly scriptedAnswers: Array<{ answer: string | { content?: JsonObject; action?: 'decline' | 'cancel' }; cue?: (text: string) => Promise<void> }> = [];
   private closed = false;
 
   constructor(
@@ -771,9 +771,13 @@ export class Device {
 
   // --- questions from a server (MCP elicitation) --------------------------------
 
-  /** Queue the answer to the next question a server asks. Used by scenarios. */
-  queueAnswer(answer: string | { content?: JsonObject; action?: 'decline' | 'cancel' }): void {
-    this.scriptedAnswers.push(answer);
+  /**
+   * Queue the answer to the next question a server asks. Used by scenarios.
+   * `cue` is called with a spoken answer just before it is given, so a UI can
+   * show (and voice) the person saying it; the answer waits until it resolves.
+   */
+  queueAnswer(answer: string | { content?: JsonObject; action?: 'decline' | 'cancel' }, cue?: (text: string) => Promise<void>): void {
+    this.scriptedAnswers.push({ answer, cue });
   }
 
   clearQueuedAnswers(): void {
@@ -800,11 +804,14 @@ export class Device {
     const scripted = this.scriptedAnswers.shift();
     if (scripted !== undefined) {
       // Let the question be heard before the scripted answer comes.
-      void spoken.then(() => {
+      void spoken.then(async () => {
         if (this.ask?.pending.id !== pending.id) return;
-        if (typeof scripted === 'string') void this.answerBySpeech(scripted, 'scenario');
-        else if (scripted.action) this.settle({ action: scripted.action }, 'scenario');
-        else this.settle({ action: 'accept', content: scripted.content ?? {} }, 'scenario');
+        const { answer, cue } = scripted;
+        if (typeof answer === 'string') {
+          await cue?.(answer).catch(() => undefined);
+          if (this.ask?.pending.id === pending.id) void this.answerBySpeech(answer, 'scenario');
+        } else if (answer.action) this.settle({ action: answer.action }, 'scenario');
+        else this.settle({ action: 'accept', content: answer.content ?? {} }, 'scenario');
       });
     } else if (!this.host.hasListeners()) {
       // Nobody is there to answer.

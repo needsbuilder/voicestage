@@ -130,8 +130,9 @@ describe('stage server', () => {
       await expect.poll(() => run()?.steps[step]?.status, { timeout: 15_000 }).toBe('passed');
     }
     await expect.poll(() => run()?.status, { timeout: 15_000 }).toBe('passed');
-    // Each spoken line of a person was cued first, so the UI could show it being said.
-    expect(events.filter((event) => event.type === 'cue').map((event) => (event.type === 'cue' ? event.text : ''))).toEqual(['How do I make pancakes?', 'Set a timer for the pancakes.']);
+    // Each spoken line of a person was cued first, so the UI could show (and voice) it being said.
+    // That includes the spoken answer to the server's question.
+    expect(events.filter((event) => event.type === 'cue').map((event) => (event.type === 'cue' ? event.text : ''))).toEqual(['How do I make pancakes?', 'Set a timer for the pancakes.', 'Three seconds']);
     expect((await (await fetch(`${running.url}/api/state`)).json()).run).toMatchObject({ status: 'passed' });
 
     await post('/api/reset');

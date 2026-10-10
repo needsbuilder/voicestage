@@ -5,6 +5,7 @@
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent, type PointerEvent } from 'react';
 import type { CardResource, DeviceSnapshot, ScreenContent } from '../../../src/shared/types';
 import { api } from '../api';
+import { describeMicProblem } from '../../../src/shared/voices';
 import { say, showToast, startListening, stopListening, stopWake, useStage, type Caption } from '../store';
 import { recognitionAvailable } from '../voice';
 import { AppCard } from './AppCard';
@@ -112,10 +113,11 @@ function Captions({ device, caption }: { device: DeviceSnapshot; caption: Captio
   const assistant = caption?.assistant;
   return (
     <div className={`captions${assistant?.speaking || user?.state === 'listening' || user?.state === 'typing' ? ' captions--live' : ''}`} aria-live="polite">
-      {user && (
+      {user && user.state === 'missed' && <p className="captions__user captions__user--missed">{user.text}</p>}
+      {user && user.state !== 'missed' && (
         <p className={`captions__user captions__user--${user.state}`}>
           <span className="captions__who">{device.person.name}</span>
-          {user.text || (user.state === 'listening' ? 'Listening...' : '')}
+          {user.text || (user.state === 'listening' ? 'Listening...' : user.state === 'opening' ? 'Opening the microphone...' : '')}
         </p>
       )}
       {assistant && <p className={`captions__assistant${assistant.speaking ? ' is-speaking' : ''}`}>{assistant.text}</p>}
@@ -153,6 +155,8 @@ function StatusLayer({ device }: { device: DeviceSnapshot }) {
 
 function Dock({ device, listening }: { device: DeviceSnapshot; listening: 'talk' | 'wake' | null }) {
   const [text, setText] = useState('');
+  const mic = useStage((state) => state.mic);
+  const micTitle = !recognitionAvailable ? describeMicProblem('unsupported').message : mic ? `${mic.message} Click to try the microphone again.` : 'Hold to talk, or tap to start and tap again to stop';
   const holding = useRef(false);
   const pressedAt = useRef(0);
   const connection = device.servers[0];
@@ -181,7 +185,7 @@ function Dock({ device, listening }: { device: DeviceSnapshot; listening: 'talk'
   const key = (event: KeyboardEvent<HTMLButtonElement>) => {
     if (event.key !== 'Enter' && event.key !== ' ') return;
     event.preventDefault();
-    if (!recognitionAvailable) return showToast('Speech recognition is not available in this browser. Type instead.');
+    if (!recognitionAvailable) return showToast(describeMicProblem('unsupported').message);
     if (listening === 'talk') stopListening(true);
     else startListening(device.id, 'talk');
   };
@@ -205,10 +209,10 @@ function Dock({ device, listening }: { device: DeviceSnapshot; listening: 'talk'
       <form className="dock__talk" onSubmit={submit}>
         <button
           type="button"
-          className={`mic${listening === 'talk' ? ' is-on' : ''}`}
+          className={`mic${listening === 'talk' ? ' is-on' : ''}${mic || !recognitionAvailable ? ' has-problem' : ''}`}
           aria-pressed={listening === 'talk'}
           aria-label={listening === 'talk' ? `Stop listening for ${device.person.name}` : `Talk as ${device.person.name}`}
-          title={recognitionAvailable ? 'Hold to talk, or tap to start and stop' : 'Speech recognition is not available in this browser. Type instead.'}
+          title={micTitle}
           disabled={!recognitionAvailable}
           onPointerDown={down}
           onPointerUp={up}
@@ -234,7 +238,7 @@ function Dock({ device, listening }: { device: DeviceSnapshot; listening: 'talk'
           className={`ghost${listening === 'wake' ? ' is-on' : ''}`}
           aria-pressed={listening === 'wake'}
           aria-label={listening === 'wake' ? 'Stop listening for the wake word' : `Listen for the wake word "${device.wakeWord}"`}
-          title={recognitionAvailable ? `Wake word: say "${device.wakeWord}, ..." hands-free` : 'Speech recognition is not available in this browser.'}
+          title={recognitionAvailable ? `Wake word: say "${device.wakeWord}, ..." hands-free` : describeMicProblem('unsupported').message}
           disabled={!recognitionAvailable}
           onClick={() => (listening === 'wake' ? stopWake() : startListening(device.id, 'wake'))}
         >
