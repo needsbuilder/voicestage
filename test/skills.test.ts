@@ -23,8 +23,20 @@ describe('Agent Skills', () => {
     expect(() => parseSkill('# No frontmatter', '/s/x')).toThrow(/must start with YAML frontmatter/);
     expect(() => parseSkill('---\ndescription: d\n---\nbody', '/s/x')).toThrow(/needs a "name"/);
     expect(() => parseSkill('---\nname: x\n---\nbody', '/s/x')).toThrow(/needs a "description"/);
-    expect(() => parseSkill('---\nname: x\ndescription: a: b: c\n---\nbody', '/s/x')).toThrow(SkillError);
+    expect(() => parseSkill('---\nname: x\ndescription: [a, b\n---\nbody', '/s/x')).toThrow(SkillError);
+    expect(() => parseSkill('---\nname: x\ndescription: [a, b\n---\nbody', '/s/x')).toThrow(/invalid YAML frontmatter/);
     expect(() => parseSkill('---\n- a\n- b\n---\nbody', '/s/x')).toThrow(/must be a YAML mapping/);
+  });
+
+  it('reads a description with an unquoted colon, which is not valid YAML but common, and says so', () => {
+    const skill = parseSkill('---\nname: pdf-help\ndescription: Use this skill when: the user asks about PDFs\nlicense: "MIT"\nmetadata:\n  author: example-org\n---\nbody', '/skills/pdf-help');
+    expect(skill.description).toBe('Use this skill when: the user asks about PDFs');
+    expect(skill.license).toBe('MIT');
+    expect(skill.metadata).toEqual({ author: 'example-org' });
+    expect(skill.warnings).toEqual([expect.stringMatching(/not valid YAML: a value contains a colon and is not quoted/)]);
+    // Valid frontmatter is never rewritten.
+    expect(parseSkill('---\nname: x\ndescription: "Use when: asked"\n---\nbody', '/s/x')).toMatchObject({ description: 'Use when: asked', warnings: [] });
+    expect(parseSkill('---\nname: x\ndescription: >\n  Use when: asked\n---\nbody', '/s/x')).toMatchObject({ description: 'Use when: asked', warnings: [] });
   });
 
   it('warns about names the format does not allow, without refusing the skill', () => {

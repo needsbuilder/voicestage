@@ -38,15 +38,32 @@ const NAME_RULE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const MAX_LISTED_FILES = 200;
 const MAX_FILE_BYTES = 200_000;
 
+/**
+ * Put quotes around top-level plain values that contain a colon, the fallback
+ * the Agent Skills guide for clients suggests for frontmatter that is not
+ * strictly YAML. Quoted values, block scalars, lists and mappings are left alone.
+ */
+function quoteValuesWithColons(yaml: string): string {
+  return yaml.replace(/^([A-Za-z][\w-]*):[ \t]+(?!["'|>[{&*!#])(.*:.*)$/gm, (_line, key: string, value: string) => `${key}: ${JSON.stringify(value.trim())}`);
+}
+
 /** Parse the text of a SKILL.md. `folder` is only used for messages and the name check. */
 export function parseSkill(text: string, folder: string): Omit<LoadedSkill, 'dir' | 'files'> {
   const match = FRONTMATTER.exec(text);
   if (!match) throw new SkillError(`${folder}/SKILL.md must start with YAML frontmatter between "---" lines.`);
+  const warnings: string[] = [];
   let meta: unknown;
   try {
     meta = parseYaml(match[1]!);
   } catch (error) {
-    throw new SkillError(`${folder}/SKILL.md has invalid YAML frontmatter: ${error instanceof Error ? error.message : String(error)}`);
+    // The most common mistake in the wild: `description: Use when: the user asks`.
+    // Other clients read that, so read it too, and say so.
+    try {
+      meta = parseYaml(quoteValuesWithColons(match[1]!));
+      warnings.push('the frontmatter is not valid YAML: a value contains a colon and is not quoted. It was read as if it were quoted.');
+    } catch {
+      throw new SkillError(`${folder}/SKILL.md has invalid YAML frontmatter: ${error instanceof Error ? error.message : String(error)}`);
+    }
   }
   if (!meta || typeof meta !== 'object' || Array.isArray(meta)) throw new SkillError(`${folder}/SKILL.md frontmatter must be a YAML mapping.`);
   const fields = meta as Record<string, unknown>;
@@ -55,7 +72,6 @@ export function parseSkill(text: string, folder: string): Omit<LoadedSkill, 'dir
   if (!name) throw new SkillError(`${folder}/SKILL.md frontmatter needs a "name".`);
   if (!description) throw new SkillError(`${folder}/SKILL.md frontmatter needs a "description".`);
 
-  const warnings: string[] = [];
   if (!NAME_RULE.test(name) || name.length > 64) warnings.push(`name "${name}" should be at most 64 lowercase letters, digits and single hyphens.`);
   if (basename(folder) !== name) warnings.push(`name "${name}" does not match the folder name "${basename(folder)}".`);
   if (description.length > 1024) warnings.push(`description is ${description.length} characters; the format allows 1024.`);
