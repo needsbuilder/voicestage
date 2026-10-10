@@ -47,6 +47,23 @@ describe('a stage on the example server', () => {
     expect(result.structuredContent).toMatchObject({ title: 'Tomato soup' });
   });
 
+  it('answers a question on 2026-07-28 too, and keeps the SDK\'s own progress text off the device', async () => {
+    const started = await startStage(exampleConfig({ protocol: 'auto' }));
+    stage = started.stage;
+    const state = await (await stage.play(loadScenarioFile(join(ROOT, 'scenarios/example/pancakes.yaml')), { mode: 'scripted', reset: true })).done;
+    expect(state.status).toBe('passed');
+    const timeline = stage.device('display')!.snapshot().timeline;
+    expect(questions(timeline)).toMatchObject([{ message: 'How long should the timer run?', status: 'accept', content: { duration: '3' } }]);
+
+    // While it answers the question, the client SDK reports progress of its own. The inspector keeps it...
+    const timer = tools(timeline).find((entry) => entry.name === 'start_timer')!;
+    expect(timer.progress.map((item) => item.message)).toEqual(["Fulfilling input required by 'tools/call' (round 1)"]);
+    // ...and the device never showed it to the person, while the server's own progress was shown.
+    const shown = started.events.flatMap((event) => (event.type === 'device' && event.patch.progress?.message ? [event.patch.progress.message] : []));
+    expect(shown).toEqual(expect.arrayContaining(['Opening the cookbook', 'Reading the recipe']));
+    expect(shown.filter((message) => /Fulfilling input required/.test(message))).toEqual([]);
+  });
+
   it('plays the second example scenario on the phone', async () => {
     ({ stage } = await startStage(exampleConfig()));
     const state = await (await stage.play(loadScenarioFile(join(ROOT, 'scenarios/example/soup-and-tea.yaml')), { mode: 'scripted', reset: true })).done;

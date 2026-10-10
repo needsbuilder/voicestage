@@ -48,6 +48,9 @@ import { createProvider, PROVIDER_LABELS, ProviderNotConfiguredError, ScriptedPr
 import type { ChatMessage, ProviderTool, RunContext, ScriptAction, ToolOutcome } from './providers/types.js';
 import { LOAD_SKILL_TOOL, loadSkills, READ_SKILL_FILE_TOOL, readSkillFile, skillTools, type LoadedSkill } from './skills.js';
 
+/** Progress text written by the MCP client SDK itself, not by the server. */
+const SDK_PROGRESS = /^Fulfilling input required by /;
+
 export interface DeviceHost {
   emit(event: StageEvent): void;
   /** True when at least one browser is watching: speech is then paced by the browser. */
@@ -605,6 +608,10 @@ export class Device {
         onProgress: (update) => {
           entry.progress.push({ at: new Date().toISOString(), ...update });
           this.update(entry, {});
+          // On 2026-07-28 the client SDK adds a progress item of its own while it answers a
+          // server's question ("Fulfilling input required by 'tools/call' (round 1)"). That is
+          // for the inspector, which has it above; it is not something to show the person.
+          if (SDK_PROGRESS.test(update.message ?? '')) return;
           this.progress = { tool: route.tool.title ?? route.tool.name, ...update };
           this.patch({ progress: this.progress });
         },
