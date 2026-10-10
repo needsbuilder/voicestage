@@ -43,6 +43,8 @@ npm run dev -- --mcp http://localhost:3000/mcp \
 
 With no model configured, use the inspector to call tools and see their cards. To talk freely, choose a [model provider](#model-providers), or write a [scenario](#scenarios) and replay it.
 
+Restart your server as often as you like; the stage does not need restarting with it. After a quiet moment a device checks its connection before the next request, and if the server has gone or has forgotten the session, it connects again and the inspector shows the new session. A server that was not running when the stage started is picked up the same way on the next request.
+
 ## What it does
 
 | | |
@@ -50,7 +52,7 @@ With no model configured, use the inspector to call tools and see their cards. T
 | **Devices and people** | A configuration file defines devices (smart display, speaker with no screen, phone), who uses each, and which servers and skills each loads. Every device makes its own MCP connection with its own HTTP headers, so two people with two tokens can be on stage together. |
 | **Voice** | Speech in through the browser's Web Speech API (hold to talk, tap to toggle, or a wake word), speech out through speech synthesis, with a voice menu for choosing who sounds like what. Everything can be typed instead, and captions are always shown. Works with no microphone and with the sound off, and says in plain words when the microphone or the sound cannot be used and why. See [Voice](#voice). |
 | **Assistant** | One agent loop per device, with a pluggable provider: `anthropic`, `bedrock`, `openai-compatible`, `claude-code` (a local Claude Code login, no key), or `scripted` (no model). |
-| **MCP client** | The official `@modelcontextprotocol/client` v2 over Streamable HTTP. Protocol 2025-11-25 with a session by default (2026-07-28 on request). Tools, structured output, progress notifications, form elicitation, resource reads, list-changed and logging notifications. The negotiated protocol version is shown in the inspector. |
+| **MCP client** | The official `@modelcontextprotocol/client` v2 over Streamable HTTP. Protocol 2025-11-25 with a session by default (2026-07-28 on request). Tools, structured output, progress notifications, form elicitation, resource reads, list-changed and logging notifications. The negotiated protocol version is shown in the inspector. A new session is started by itself when your server restarts. |
 | **MCP Apps** | When a tool links a `ui://` card, the card is rendered on the device screen in a sandboxed iframe using the official host bridge (`AppBridge` from `@modelcontextprotocol/ext-apps`). Tool calls and resource reads made by the card go back through the host to the card's own server. A tool result with no card gets a clean default card drawn from its structured content. |
 | **Questions from a server** | A form elicitation is asked aloud and shown on the screen. The person answers by voice or by tapping, and the answer is returned to the server. |
 | **Proactive announcements** | A device can subscribe to a server-sent events URL, and to notifications on the MCP connection, and turn chosen events into an announcement: an indicator first, then the voice, optionally with a tool call whose result goes on the screen. |
@@ -204,7 +206,7 @@ Voice is the browser's Web Speech API, so what you get depends on the browser an
 
 **Speaking.**
 
-- A browser's default voice follows the system language, not the page: a Mac set to Korean reads English text with a Korean voice. And a Mac offers about forty English voices, most of them novelties. So Voicestage chooses by name: a clear voice that runs on the computer, a different one for each device, and for the person at each device (when a scenario speaks their lines) one that no device uses. On a Mac with the standard voices that is Samantha for the first device, Daniel for the second, and Moira and Tessa for the people.
+- A browser's default voice follows the system language, not the page: on a Mac set to Korean, the voice Chrome marks as its default is a Korean one. And a Mac offers about forty English voices, many of them novelties. So Voicestage chooses by name: a clear voice that runs on the computer, a different one for each device, and for the person at each device (when a scenario speaks their lines) one that no device uses. On a Mac with the standard voices that is Samantha for the first device, Daniel for the second, and Moira and Tessa for the people.
 - The **voice menu** in the top bar (the icon next to the loudspeaker) changes any of them and plays a sample. Choices are remembered in the browser. `voice.name` on a device or a person in the configuration sets the default for everyone; a name the browser does not have falls back to the automatic choice.
 - Chrome will not speak until the page has had a click or a key press: `speechSynthesis.speak()` fails with `not-allowed`. Voicestage then shows a notice under the top bar ("Sound is waiting for you..."), keeps showing each line for as long as it would take to say, and starts speaking with the next line after a click.
 - Each sentence is one utterance, and its caption is put up when the utterance starts. Lines never overlap: devices take turns through one queue. A tab in the background keeps speaking. Talking or typing over a device stops it mid-sentence.
@@ -223,6 +225,8 @@ Voice is the browser's Web Speech API, so what you get depends on the browser an
 | Nobody said anything | `no-speech` after about 8 seconds | The device shows "I didn't hear anything." and stops listening. |
 | No microphone | `audio-capture` | "No microphone was found. Connect one, or choose one in the browser's site settings." |
 | The browser has no recognition (Firefox) | no `SpeechRecognition` | "This browser has no speech recognition. Chrome, Edge and Safari do." The microphone buttons are disabled. |
+
+The first four rows were produced and watched in Chrome by `npm run voice:check`. The last two were not: no machine without a microphone and no other browser was tried, so those rows follow the Web Speech API's definition of `audio-capture` and the absence of `SpeechRecognition`, and the wording is covered by a unit test only.
 
 Chrome sends the audio to Google's recognition service. On lines spoken by the macOS `say` command, it heard the twelve spoken lines of the shipped scenarios well enough for all twelve to be matched to the right script, with small slips ("the roofer" came back as "the river").
 
@@ -244,7 +248,7 @@ A tool that carries `_meta.ui.resourceUri` gets its card. Voicestage reads the `
 
 Calls a card makes are sent to the stage server, which makes them on the device's own connection to the server the card came from, and nowhere else. They appear in the inspector with origin `card`.
 
-This is a local development host. It does not serve cards from a separate sandbox origin, which the MCP Apps specification recommends for production hosts; the sandbox attribute and the policy above are what stand between a card and the page.
+**Where this departs from the specification.** The MCP Apps specification (2026-01-26, "Sandbox proxy") says that a host which is a web page MUST wrap the card in an intermediate sandbox proxy served from a different origin, with `allow-scripts allow-same-origin`. Voicestage does not do that yet. It loads the card straight into one sandboxed iframe from its own page, so the sandbox attribute and the policy above are what stand between a card and the page, and the card runs with an opaque origin. Checked in Chrome 154: inside a card `window.origin` is `null`, the page around it cannot be reached, undeclared `fetch` is blocked, and `localStorage` and `document.cookie` throw `SecurityError`. A card that needs storage or a real origin will therefore work in a conforming host and fail here. The handshake, tool input and result, and the calls a card makes back through the host are the same either way.
 
 ## Agent Skills
 
@@ -254,7 +258,7 @@ A skill is a folder with a `SKILL.md`: YAML frontmatter with `name` and `descrip
 2. The assistant loads a skill's body when a request matches, by calling a built-in `load_skill` tool. The inspector shows when that happens. With `skillActivation: always` the bodies are placed in the prompt instead, for models that do not call tools reliably.
 3. Other files in the folder can be read with `read_skill_file`. Scripts are never executed.
 
-Names that break the format's rules produce a warning in the inspector, not a failure.
+Names that break the format's rules produce a warning in the inspector, not a failure. So does frontmatter that is not strictly YAML because a value contains a colon and is not quoted (`description: Use when: the user asks`), the mistake the Agent Skills guide for clients singles out: it is read as if the value were quoted.
 
 ## Example: Hold On
 
@@ -304,6 +308,7 @@ npm run typecheck
 | `test/default-card.test.ts` | The default card for structured, text-only and error results; the card sandbox policy |
 | `test/providers.test.ts` | Each provider's settings and error messages; the scripted provider; the tool loop; the Anthropic, Bedrock and OpenAI-compatible request shapes against fake clients |
 | `test/events.test.ts` | The server-sent events parser and client, reconnection with `Last-Event-ID` |
+| `test/reconnect.test.ts` | An MCP server that stops, restarts or forgets the session: the plain error, the new session, one reconnection shared by requests that fail together, a scenario played again after a restart |
 | `test/stage.e2e.test.ts` | A real MCP client against the example server: protocol 2025-11-25 and 2026-07-28, sessions, structured output, progress, elicitation by voice and by screen, the card resource, announcements, the indicator mode, connection failures |
 | `test/api.test.ts` | The stage server's API and event stream, a scenario played step by step, card tool calls, the localhost check |
 | `test/timer-card.test.ts` | The example card driven by the official `AppBridge` in jsdom |
@@ -340,11 +345,15 @@ The stage server holds the MCP connections and runs the assistants, because mode
 - **It is a stand-in, not an emulator.** How a real assistant chooses tools, phrases things, lays out cards or delivers notifications will differ. Use Voicestage to develop and demonstrate; test on the real platform when you can.
 - **Speech recognition is the browser's.** It needs Chrome, Edge or Safari and a microphone permission, and in Chrome the audio is processed by the browser vendor's online service. Typing always works. The wake word is matched in the recognised text, not detected on the audio. Recognition has been checked with synthetic speech fed to Chrome's recogniser, not with a person at a microphone.
 - **Voices are the browser's too.** Which ones exist depends on the operating system, and the automatic choice knows the common macOS, Windows and Chrome voice names, not every system's. Browsers will not speak until the page has been clicked once; until then lines are shown without sound, and a notice says so. Voice has been checked in Google Chrome on macOS only.
-- **Cards are sandboxed with an iframe attribute and a policy**, not a separate origin. See [MCP Apps on the device screen](#mcp-apps-on-the-device-screen).
+- **Cards are sandboxed with an iframe attribute and a policy, not the sandbox proxy on a separate origin that the MCP Apps specification requires of a web host.** Cards that use storage or need a real origin will not work here. See [MCP Apps on the device screen](#mcp-apps-on-the-device-screen).
 - **Form elicitation only.** URL-mode elicitation is declined. Sampling and roots are not offered to servers.
 - **Streamable HTTP only.** No stdio servers, and no OAuth flow: put a token in a header.
 - **One browser tab is the audience.** Speech pacing follows the tabs that are open; several open tabs will each speak.
 - **Three of the five providers have not been run against their live services** by the author; see [Model providers](#model-providers).
+
+## Notes from building it
+
+Voicestage was built for a hackathon track whose own developer tools were not available to participants. What got in the way while building it, with exact errors and versions, is in [docs/hackathon/friction-log.md](docs/hackathon/friction-log.md); what we would say to the teams behind each tool is in [docs/hackathon/product-feedback.md](docs/hackathon/product-feedback.md).
 
 ## License
 

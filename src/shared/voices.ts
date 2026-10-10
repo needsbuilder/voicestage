@@ -2,7 +2,7 @@
  * Choosing speech synthesis voices, and explaining microphone problems.
  *
  * Browsers hand a page whatever voices the operating system has. On a Mac that
- * is about forty English ones, most of them unusable for an assistant: novelty
+ * is about forty English ones, many of them unusable for an assistant: novelty
  * voices ("Bad News", "Bells", "Zarvox"), and a system default that follows the
  * system language rather than the page (a Korean Mac defaults to a Korean
  * voice). So the choice is made here, by name, with rules that can be tested:
