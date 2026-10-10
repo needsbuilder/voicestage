@@ -275,6 +275,7 @@ export class Device {
       },
       onEvent: (event) => {
         link.received += 1;
+        publish('open');
         let data: unknown = event.data;
         try {
           data = JSON.parse(event.data);

@@ -41,9 +41,6 @@ devices:
     person: { name: Sam }
     servers: [kitchen]
     skills: [kitchen-helper]
-    hints:
-      - "Set a timer for the tea."
-      - "How do I make tomato soup?"
 
 scenarios:
   - scenarios/example

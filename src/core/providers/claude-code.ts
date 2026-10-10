@@ -178,7 +178,7 @@ class DeviceSession {
         text: text || undefined,
         toolCalls,
         stopReason: message.message.stop_reason ?? undefined,
-        usage: { inputTokens: message.message.usage?.input_tokens, outputTokens: message.message.usage?.output_tokens },
+        // Token counts per message leave out cached input and would mislead; the turn total is reported at the end.
         model: message.message.model,
         note: message.error ? `The model reported an error: ${message.error}.` : undefined,
       });

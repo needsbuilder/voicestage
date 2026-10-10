@@ -1,0 +1,35 @@
+name: Soup and a tea timer
+description: >
+  The same server from the phone: a recipe (default card), then a timer whose
+  duration the server asks for. When you say these lines yourself, answer the
+  question by voice or by tapping a choice on the screen.
+config: ../../voicestage.config.yaml
+
+steps:
+  - device: phone
+    say: "How do I make tomato soup?"
+    script:
+      - skill: kitchen-helper
+      - call: find_recipe
+        args: { dish: tomato soup }
+        save: recipe
+      - say: "{{recipe.say_to_user}}"
+    expect:
+      - tool: find_recipe
+        result: { title: Tomato soup, minutes: 35 }
+      - screen: default
+
+  - device: phone
+    say: "Set a timer for the tea."
+    when_asked: "One minute"
+    script:
+      - call: start_timer
+        args: { label: tea }
+        save: timer
+      - say: "{{timer.say_to_user}}"
+    expect:
+      - asked: "How long"
+      - tool: start_timer
+        result: { label: tea, seconds: 60, status: running }
+      - screen: ui://example/timer-card.html
+      - said: "set for 1 minute"

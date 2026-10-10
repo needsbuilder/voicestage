@@ -9,6 +9,7 @@ import { formFields, type FormField } from '../../../src/shared/speech';
 import type { JsonObject, PendingElicitation } from '../../../src/shared/types';
 import { api } from '../api';
 import { showToast } from '../store';
+import { voice } from '../voice';
 
 function initial(fields: FormField[]): JsonObject {
   const values: JsonObject = {};
@@ -28,6 +29,8 @@ export function QuestionForm({ deviceId, question }: { deviceId: string; questio
 
   const send = (action: 'accept' | 'decline', content?: JsonObject) => {
     setBusy(true);
+    // Answering interrupts the device if it is still reading the question out.
+    voice.cancel(deviceId);
     api.answer(deviceId, question.id, action, content).catch((error: unknown) => {
       setBusy(false);
       showToast(error instanceof Error ? error.message : String(error));

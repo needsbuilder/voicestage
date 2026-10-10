@@ -24,7 +24,15 @@ export function normalizeUtterance(text: string): string {
     .trim();
 }
 
-const STOPWORDS = new Set(['a', 'an', 'the', 'to', 'of', 'and', 'it', 'is', 'in', 'on', 'for', 'my', 'me', 'i', 'please', 'um', 'uh', 'so', 'just', 'that', 'this', 'was', 'be']);
+/**
+ * Words that say little about what a sentence is about. Leaving them out keeps
+ * "How do I make tomato soup?" from being mistaken for "How do I make pancakes?".
+ */
+const STOPWORDS = new Set(
+  'a an the to of and or but it is in on at for with from by my me i you your we our us please um uh so just that this these those was were be been am are do does did how what when where which who can could would will shall should have has had there here then than as if not no yes okay ok its'.split(
+    ' ',
+  ),
+);
 
 export function utteranceTokens(text: string): string[] {
   return normalizeUtterance(text)
@@ -38,10 +46,15 @@ function significant(tokens: string[]): string[] {
   return kept.length > 0 ? kept : tokens;
 }
 
+/** "pancake" and "pancakes" are the same word to a listener. */
+function stem(token: string): string {
+  return token.length > 3 && token.endsWith('s') && !token.endsWith('ss') ? token.slice(0, -1) : token;
+}
+
 /** Sørensen-Dice overlap of the significant words of two utterances, 0 to 1. */
 export function utteranceSimilarity(a: string, b: string): number {
-  const left = significant(utteranceTokens(a));
-  const right = significant(utteranceTokens(b));
+  const left = significant(utteranceTokens(a)).map(stem);
+  const right = significant(utteranceTokens(b)).map(stem);
   if (left.length === 0 || right.length === 0) return 0;
   const counts = new Map<string, number>();
   for (const token of left) counts.set(token, (counts.get(token) ?? 0) + 1);
@@ -62,7 +75,7 @@ export interface LineMatch<T> {
 }
 
 /** The known line closest to what was said, if it is close enough. */
-export function bestLineMatch<T>(said: string, lines: Array<{ text: string; item: T }>, threshold = 0.62): LineMatch<T> | undefined {
+export function bestLineMatch<T>(said: string, lines: Array<{ text: string; item: T }>, threshold = 0.7): LineMatch<T> | undefined {
   let best: LineMatch<T> | undefined;
   const normalized = normalizeUtterance(said);
   for (const line of lines) {

@@ -85,7 +85,8 @@ function describe(entry: TimelineEntry): Row {
       const calls = entry.toolCalls.map((call) => call.name).join(', ');
       const title = calls ? `calls ${calls}` : entry.text ? clip(entry.text) : (entry.note ?? 'no output');
       const usage = entry.usage?.inputTokens !== undefined || entry.usage?.outputTokens !== undefined ? `${entry.usage.inputTokens ?? '?'} in / ${entry.usage.outputTokens ?? '?'} out` : undefined;
-      return { label: 'Model', title, meta: [entry.model ?? entry.provider, `round ${entry.round}`, entry.stopReason, usage, entry.durationMs !== undefined ? `${entry.durationMs} ms` : undefined].filter((item): item is string => Boolean(item)) };
+      const cost = entry.usage?.costUsd !== undefined ? `about $${entry.usage.costUsd.toFixed(4)}` : undefined;
+      return { label: 'Model', title, meta: [entry.model ?? entry.provider, `round ${entry.round}`, entry.stopReason, usage, cost, entry.durationMs !== undefined ? `${entry.durationMs} ms` : undefined].filter((item): item is string => Boolean(item)) };
     }
     case 'tool':
       return {

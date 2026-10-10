@@ -90,7 +90,7 @@ describe('scenario files', () => {
     const errors: string[] = [];
     const scenarios = loadScenarios([join(root, 'scenarios/example'), join(root, 'examples/holdon/scenarios')], (path, error) => errors.push(`${path}: ${error.message}`));
     expect(errors).toEqual([]);
-    expect(scenarios.map((scenario) => scenario.id)).toEqual(['pancakes', 'a-irs-gift-cards', 'b-utility-bill', 'c-contractor-deposit']);
+    expect(scenarios.map((scenario) => scenario.id)).toEqual(['pancakes', 'soup-and-tea', 'a-irs-gift-cards', 'b-utility-bill', 'c-contractor-deposit']);
     for (const scenario of scenarios) {
       // Every spoken step has a script, so every shipped scenario can run with no model.
       for (const step of scenario.steps.filter((candidate) => candidate.kind === 'say')) expect(step.script, `${scenario.id} step ${step.index + 1}`).toBeDefined();

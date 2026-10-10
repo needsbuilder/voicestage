@@ -47,6 +47,13 @@ describe('a stage on the example server', () => {
     expect(result.structuredContent).toMatchObject({ title: 'Tomato soup' });
   });
 
+  it('plays the second example scenario on the phone', async () => {
+    ({ stage } = await startStage(exampleConfig()));
+    const state = await (await stage.play(loadScenarioFile(join(ROOT, 'scenarios/example/soup-and-tea.yaml')), { mode: 'scripted', reset: true })).done;
+    expect(state.steps.flatMap((step) => [step.error, ...step.checks.filter((check) => !check.ok).map((check) => `${check.label}: ${check.detail}`)]).filter(Boolean)).toEqual([]);
+    expect(state.status).toBe('passed');
+  });
+
   it('plays the example scenario: recipe, question, timer card, announcement', async () => {
     ({ stage } = await startStage(exampleConfig()));
     const scenario = loadScenarioFile(join(ROOT, 'scenarios/example/pancakes.yaml'));
@@ -108,6 +115,10 @@ describe('a stage on the example server', () => {
     expect(phone.currentScreen()).toMatchObject({ tool: { name: 'find_recipe' } });
     // No card is linked from find_recipe, so the screen draws its default card.
     expect(phone.currentScreen()!.card).toBeUndefined();
+
+    // The phone's own lines: a second scenario ships for it.
+    const soup = await phone.hear('How do I make tomato soup?');
+    expect(tools(soup.entries)[0]!.result!.structuredContent).toMatchObject({ title: 'Tomato soup' });
 
     const lost = await phone.hear('What is the meaning of life?');
     expect(tools(lost.entries)).toEqual([]);

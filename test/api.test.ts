@@ -71,7 +71,12 @@ describe('stage server', () => {
     ]);
     expect(snapshot.devices[0]!.servers[0]).toMatchObject({ protocolVersion: '2025-11-25', status: 'connected' });
     expect(snapshot.devices[0]!.hints).toEqual(['How do I make pancakes?', 'Set a timer for the pancakes.']);
-    expect(snapshot.scenarios).toMatchObject([{ id: 'pancakes', name: 'Pancakes and a timer', devices: ['display'] }]);
+    expect(snapshot.scenarios).toMatchObject([
+      { id: 'pancakes', name: 'Pancakes and a timer', devices: ['display'] },
+      { id: 'soup-and-tea', name: 'Soup and a tea timer', devices: ['phone'] },
+    ]);
+    // Each device suggests the lines written for it, which is what a scripted device can answer.
+    expect(snapshot.devices[1]!.hints).toEqual(['How do I make tomato soup?', 'Set a timer for the tea.']);
   });
 
   it('streams a turn: transcript, timeline, screen and speech', async () => {

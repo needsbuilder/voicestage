@@ -19,9 +19,14 @@ describe('matching what was said against known lines', () => {
       { text: "My Con Edison bill came in the mail. It's $182.40. Please pay it with my card.", item: 'bill' },
     ];
     expect(bestLineMatch('set a timer for pancakes', lines)?.item).toBe('timer');
+    expect(bestLineMatch('set timer for the pancake', lines)?.item).toBe('timer');
+    expect(bestLineMatch("a man from the IRS just called he says I'll be arrested unless I pay $2,000 in gift card today and told me not to tell anyone", [...lines, { text: "A man from the IRS just called. He says I'll be arrested unless I pay $2,000 in gift cards today, and he told me not to tell anyone.", item: 'irs' }])?.item).toBe('irs');
     expect(bestLineMatch('how do i make the pancakes', lines)?.item).toBe('recipe');
     expect(bestLineMatch('my con edison bill came in the mail it is $182.40 please pay with my card', lines)?.item).toBe('bill');
     expect(bestLineMatch('tell me a joke', lines)).toBeUndefined();
+    // The same shape of question about something else is not a match.
+    expect(bestLineMatch('How do I make tomato soup?', lines)).toBeUndefined();
+    expect(bestLineMatch('set a timer for the tea', lines)).toBeUndefined();
   });
 });
 

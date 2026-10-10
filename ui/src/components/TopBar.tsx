@@ -11,7 +11,7 @@ function ScenarioPlayer() {
   const stage = useStage((state) => state.stage)!;
   const run = stage.run;
   const running = run?.status === 'running';
-  const [scenarioId, setScenarioId] = useState(() => new URLSearchParams(location.search).get('scenario') ?? stage.scenarios[0]?.id ?? '');
+  const [scenarioId, setScenarioId] = useState(() => new URLSearchParams(location.search).get('scenario') ?? run?.scenario.id ?? stage.scenarios[0]?.id ?? '');
   const [mode, setMode] = useState<'scripted' | 'live'>('scripted');
   const [stepwise, setStepwise] = useState(false);
   const liveReady = stage.devices.some((device) => device.provider.ready && device.provider.id !== 'scripted');
@@ -132,7 +132,7 @@ export function TopBar() {
         </button>
         <label className="check" title="In a played scenario, also speak the people's lines aloud.">
           <input type="checkbox" checked={settings.voicePeople} onChange={(event) => updateSettings({ voicePeople: event.target.checked })} />
-          Voice people
+          Speak people&rsquo;s lines
         </label>
         <button type="button" className={`icon-button${settings.voice ? ' is-on' : ''}`} aria-pressed={settings.voice} aria-label={settings.voice ? 'Sound is on. Switch to captions only' : 'Captions only. Switch sound on'} title={settings.voice ? 'Sound on' : 'Captions only'} onClick={() => updateSettings({ voice: !settings.voice })}>
           {settings.voice ? <SpeakerIcon /> : <MuteIcon />}
