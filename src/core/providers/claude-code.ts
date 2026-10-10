@@ -117,7 +117,7 @@ class DeviceSession {
       tools: [],
       mcpServers: { [SERVER_NAME]: this.buildServer() },
       strictMcpConfig: true,
-      allowedTools: [`mcp__${SERVER_NAME}`],
+      // Every tool call is decided here: the device's own tools are allowed, nothing else is.
       canUseTool: async (toolName, input) =>
         toolName.startsWith(TOOL_PREFIX) ? { behavior: 'allow', updatedInput: input } : { behavior: 'deny', message: 'Only the tools of the connected services are available on this device.' },
       settingSources: [],

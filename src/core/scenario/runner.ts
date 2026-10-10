@@ -293,3 +293,53 @@ export function formatReport(state: ScenarioRunState, options: { color?: boolean
   lines.push(`  ${verdict}: ${passed} passed, ${failed} failed${skipped ? `, ${skipped} skipped` : ''}`);
   return lines.join('\n');
 }
+
+/** A plain-text rendering of a device's timeline, for `voicestage scenario --trace`. */
+export function formatTimeline(entries: TimelineEntry[]): string {
+  const short = (value: unknown, length = 220) => {
+    const text = typeof value === 'string' ? value : JSON.stringify(value);
+    return text === undefined ? '' : text.length > length ? `${text.slice(0, length)}...` : text;
+  };
+  const lines: string[] = [];
+  for (const entry of entries) {
+    const time = entry.at.slice(11, 23);
+    switch (entry.kind) {
+      case 'utterance':
+        lines.push(`${time}  heard      "${entry.text}"`);
+        break;
+      case 'speech':
+        lines.push(`${time}  ${entry.reason === 'announcement' ? 'announced ' : entry.reason === 'question' ? 'asked     ' : 'said      '} "${entry.text}"`);
+        break;
+      case 'model':
+        lines.push(`${time}  model      ${entry.model ?? entry.provider} round ${entry.round}: ${entry.toolCalls.length > 0 ? `calls ${entry.toolCalls.map((call) => call.name).join(', ')}` : entry.text ? `"${short(entry.text, 120)}"` : (entry.note ?? '')}`);
+        break;
+      case 'tool':
+        lines.push(`${time}  tool       ${entry.name}(${short(entry.arguments)}) [${entry.origin}] -> ${entry.status}${entry.durationMs !== undefined ? ` in ${entry.durationMs} ms` : ''}${entry.progress.length > 0 ? `, ${entry.progress.length} progress` : ''}`);
+        if (entry.result?.structuredContent !== undefined) lines.push(`${' '.repeat(25)}${short(entry.result.structuredContent, 300)}`);
+        else if (entry.status === 'error') lines.push(`${' '.repeat(25)}${short(entry.error ?? (entry.result?.content ?? []).map((block) => block.text).join(' '), 300)}`);
+        break;
+      case 'elicitation':
+        lines.push(`${time}  question   "${entry.message}" -> ${entry.status}${entry.content ? ` ${JSON.stringify(entry.content)}` : ''}${entry.answeredBy ? ` (by ${entry.answeredBy})` : ''}`);
+        break;
+      case 'event':
+        lines.push(`${time}  event      ${entry.name} (${entry.channel})${entry.matched ? ', announced' : ''}`);
+        break;
+      case 'resource':
+        lines.push(`${time}  resource   ${entry.uri}${entry.error ? ` FAILED: ${entry.error}` : ` ${entry.bytes ?? '?'} bytes`}`);
+        break;
+      case 'connection':
+        lines.push(`${time}  connection ${entry.server}: ${entry.status === 'connected' ? `MCP ${entry.protocolVersion}, ${entry.toolCount} tools` : (entry.error ?? entry.status)}`);
+        break;
+      case 'skill':
+        lines.push(`${time}  skill      ${entry.action} ${entry.name}${entry.file ? `/${entry.file}` : ''}`);
+        break;
+      case 'card':
+        lines.push(`${time}  card       ${entry.action}`);
+        break;
+      case 'error':
+        lines.push(`${time}  ERROR      ${entry.message}${entry.detail ? `: ${short(entry.detail, 300)}` : ''}`);
+        break;
+    }
+  }
+  return lines.join('\n');
+}

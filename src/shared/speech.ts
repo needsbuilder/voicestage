@@ -135,27 +135,43 @@ const DECLINE = /\b(never ?mind|cancel|skip( it| that)?|forget it|i'?d rather no
 const YES = /\b(yes|yeah|yep|yup|sure|correct|right|that'?s right|it (is|was|did)|i (do|did|am|was)|true|affirmative|ok|okay)\b/;
 const NO = /\b(no|nope|nah|not really|it (isn'?t|wasn'?t|didn'?t)|i (don'?t|didn'?t)|false|negative)\b/;
 
+/** "three minutes" and "3 minutes" should compare equal: write number words as digits. */
+function digits(text: string): string {
+  return normalizeUtterance(text)
+    .split(' ')
+    .map((token) => (token in NUMBER_WORDS ? String(NUMBER_WORDS[token]) : token))
+    .join(' ');
+}
+
 function chooseOption(said: string, options: FormOption[]): FormOption | undefined {
-  const normalized = normalizeUtterance(said);
-  const saidTokens = new Set(utteranceTokens(said));
+  const normalized = digits(said);
+  const saidTokens = new Set(normalized.split(' '));
   let best: { option: FormOption; score: number } | undefined;
+  let tied = false;
   for (const option of options) {
     const candidates = [option.label, option.value.replace(/[_-]+/g, ' ')];
     let score = 0;
     for (const candidate of candidates) {
-      const text = normalizeUtterance(candidate);
+      const text = digits(candidate);
       if (!text) continue;
       if (text === normalized) score = Math.max(score, 1);
-      else if (normalized.includes(text)) score = Math.max(score, 0.95);
+      else if (` ${normalized} `.includes(` ${text} `)) score = Math.max(score, 0.95);
       else {
-        const words = significant(utteranceTokens(candidate));
+        const words = significant(text.split(' '));
+        // A choice with a number in it ("3 minutes") is only meant when that number was said.
+        if (!words.filter((word) => /^\d/.test(word)).every((word) => saidTokens.has(word))) continue;
         const hits = words.filter((word) => saidTokens.has(word)).length;
         if (hits > 0) score = Math.max(score, 0.5 + 0.4 * (hits / words.length));
       }
     }
-    if (score > 0 && (!best || score > best.score)) best = { option, score };
+    if (score <= 0) continue;
+    if (!best || score > best.score) {
+      best = { option, score };
+      tied = false;
+    } else if (score === best.score) tied = true;
   }
-  return best && best.score >= 0.6 ? best.option : undefined;
+  // Two options that fit equally well ("minutes" for both "3 minutes" and "5 minutes") is not an answer.
+  return best && best.score >= 0.6 && !tied ? best.option : undefined;
 }
 
 function parseNumber(said: string): number | undefined {

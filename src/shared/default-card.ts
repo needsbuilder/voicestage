@@ -78,9 +78,16 @@ export function humanizeKey(key: string): string {
   return text.charAt(0).toUpperCase() + text.slice(1);
 }
 
-function humanizeValue(text: string): string {
-  // "pending_family" reads better as "Pending family"; leave real sentences and ids alone.
-  if (/^[a-z][a-z0-9]*(_[a-z0-9]+)+$/.test(text) || /^[a-z]+$/.test(text)) {
+const ID_KEY = /(^id$|_id$|Id$|^uri$|_uri$|^url$|_url$|code$|token$|^confirmation$|^key$|_key$|^slug$|^email$)/;
+
+/**
+ * "pending_family" reads better as "Pending family". Only words made of
+ * lower-case letters are treated that way: identifiers ("hold_1", "rcpt_x9"),
+ * sentences and anything under an id-like key are left exactly as they are.
+ */
+function humanizeValue(text: string, key = ''): string {
+  if (ID_KEY.test(key)) return text;
+  if (/^[a-z]+(_[a-z]+)*$/.test(text)) {
     const spaced = text.replace(/_/g, ' ');
     return spaced.charAt(0).toUpperCase() + spaced.slice(1);
   }
@@ -113,7 +120,7 @@ export function formatValue(key: string, value: unknown, options: { locale?: str
           : date.toLocaleString(locale, { dateStyle: 'medium', timeStyle: 'short', timeZone: options.timeZone });
       }
     }
-    return humanizeValue(value);
+    return humanizeValue(value, key);
   }
   if (Array.isArray(value)) {
     const parts = value.filter((item) => item === null || typeof item !== 'object').map((item) => formatValue(key, item, options));

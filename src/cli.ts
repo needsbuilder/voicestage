@@ -12,7 +12,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { ConfigError, findConfigFile, loadConfigFile, quickConfig, type ProviderId, type StageConfig } from './core/config.js';
-import { formatReport } from './core/scenario/runner.js';
+import { formatReport, formatTimeline } from './core/scenario/runner.js';
 import { loadScenarioFile, ScenarioError, type Scenario } from './core/scenario/schema.js';
 import { Stage } from './core/stage.js';
 import { createStageApp, listen } from './server/app.js';
@@ -52,6 +52,8 @@ Scenario runner
   --mode scripted|live   scripted replays each step's script with no model (default);
                          live lets the configured provider drive
   --json                 Print the result as JSON
+  --trace                Also print each device's timeline: what was heard, each model turn,
+                         every tool call with its arguments and result
   --paced                Leave pauses between steps, as the UI does
 
 Other
@@ -91,6 +93,7 @@ interface Flags {
   scenarios?: string[];
   mode?: string;
   json?: boolean;
+  trace?: boolean;
   paced?: boolean;
   help?: boolean;
   version?: boolean;
@@ -209,6 +212,12 @@ async function runScenarios(files: string[], flags: Flags): Promise<number> {
       results.push(state);
       if (state.status !== 'passed') failed += 1;
       say(`\n${formatReport(state, { color: process.stdout.isTTY })}`);
+      if (flags.trace) {
+        for (const device of stage.devices.values()) {
+          const snapshot = device.snapshot();
+          say(`\n  ${snapshot.name} (${snapshot.id}), assistant: ${snapshot.provider.id}${snapshot.provider.model ? ` ${snapshot.provider.model}` : ''}\n${formatTimeline(snapshot.timeline).replace(/^/gm, '    ')}`);
+        }
+      }
     }
   } finally {
     await stage.close().catch(() => undefined);
@@ -234,6 +243,7 @@ async function main(): Promise<void> {
       scenarios: { type: 'string', multiple: true },
       mode: { type: 'string' },
       json: { type: 'boolean' },
+      trace: { type: 'boolean' },
       paced: { type: 'boolean' },
       help: { type: 'boolean', short: 'h' },
       version: { type: 'boolean', short: 'v' },

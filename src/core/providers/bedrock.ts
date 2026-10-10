@@ -37,7 +37,8 @@ export class BedrockProvider implements Provider {
   private readonly client: BedrockRuntimeClient;
   private readonly maxTokens: number;
 
-  constructor(input: ProviderFactoryInput) {
+  /** `client` is for tests; normally the SDK client is created with the standard AWS credential chain. */
+  constructor(input: ProviderFactoryInput, client?: BedrockRuntimeClient) {
     const { assistant, env } = input;
     const model = env.VOICESTAGE_MODEL ?? assistant.model;
     if (!model) {
@@ -52,7 +53,7 @@ export class BedrockProvider implements Provider {
     }
     this.model = model;
     this.maxTokens = optionNumber(assistant.options, 'maxTokens') ?? 2048;
-    this.client = new BedrockRuntimeClient({ region });
+    this.client = client ?? new BedrockRuntimeClient({ region });
   }
 
   async run(ctx: RunContext): Promise<RunResult> {

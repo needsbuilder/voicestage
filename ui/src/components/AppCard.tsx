@@ -19,36 +19,10 @@
  */
 import { AppBridge, PostMessageTransport, type McpUiHostContext } from '@modelcontextprotocol/ext-apps/app-bridge';
 import { useEffect, useRef, useState } from 'react';
+import { withCsp } from '../../../src/shared/card-html';
 import { PRODUCT_NAME, PRODUCT_VERSION, type CardResource, type DeviceKind, type ScreenContent } from '../../../src/shared/types';
 import { api } from '../api';
 import { say, showToast } from '../store';
-
-/** The Content-Security-Policy for a card: deny by default, allow only what the resource declared. */
-export function cardCsp(csp: CardResource['csp']): string {
-  const resources = (csp?.resourceDomains ?? []).join(' ');
-  const connect = (csp?.connectDomains ?? []).join(' ');
-  const frames = (csp?.frameDomains ?? []).join(' ');
-  const base = (csp?.baseUriDomains ?? []).join(' ');
-  return [
-    "default-src 'none'",
-    `script-src 'unsafe-inline' ${resources}`.trim(),
-    `style-src 'unsafe-inline' ${resources}`.trim(),
-    `img-src data: blob: ${resources}`.trim(),
-    `font-src data: ${resources}`.trim(),
-    `media-src data: blob: ${resources}`.trim(),
-    `connect-src ${connect || "'none'"}`,
-    `frame-src ${frames || "'none'"}`,
-    `base-uri ${base || "'none'"}`,
-    "form-action 'none'",
-  ].join('; ');
-}
-
-export function withCsp(html: string, csp: CardResource['csp']): string {
-  const meta = `<meta http-equiv="Content-Security-Policy" content="${cardCsp(csp).replace(/"/g, '&quot;')}">`;
-  if (/<head[^>]*>/i.test(html)) return html.replace(/<head[^>]*>/i, (head) => `${head}${meta}`);
-  if (/<html[^>]*>/i.test(html)) return html.replace(/<html[^>]*>/i, (root) => `${root}<head>${meta}</head>`);
-  return `${meta}${html}`;
-}
 
 function textOfBlocks(blocks: Array<{ type: string; text?: string }> | undefined): string {
   return (blocks ?? [])

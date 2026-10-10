@@ -61,14 +61,15 @@ export class AnthropicProvider implements Provider {
   private readonly maxTokens: number;
   private useFallbacks: boolean;
 
-  constructor(input: ProviderFactoryInput) {
+  /** `client` is for tests; normally the SDK client is created from the environment. */
+  constructor(input: ProviderFactoryInput, client?: Anthropic) {
     const { assistant, env } = input;
     const keyEnv = optionString(assistant.options, 'apiKeyEnv');
     const baseURL = optionString(assistant.options, 'baseUrl');
     const hasCredentials = Boolean(
       (keyEnv && env[keyEnv]) || env.ANTHROPIC_API_KEY || env.ANTHROPIC_AUTH_TOKEN || env.ANTHROPIC_IDENTITY_TOKEN_FILE || env.ANTHROPIC_IDENTITY_TOKEN || existsSync(join(env.HOME ?? homedir(), '.config', 'anthropic')),
     );
-    if (!hasCredentials) {
+    if (!hasCredentials && !client) {
       throw new ProviderNotConfiguredError(
         'anthropic',
         `The "anthropic" provider needs credentials. Set ANTHROPIC_API_KEY${keyEnv ? ` (or ${keyEnv})` : ''} in your environment or .env file, or sign in with "ant auth login". To try Voicestage without a key, use the "scripted" provider.`,
@@ -83,10 +84,12 @@ export class AnthropicProvider implements Provider {
     this.effort = effort as Effort;
     this.maxTokens = optionNumber(assistant.options, 'maxTokens') ?? 16000;
     this.useFallbacks = assistant.options?.fallbacks !== false && !baseURL && SERVER_FALLBACK_MODELS.has(this.model);
-    this.client = new Anthropic({
-      ...(keyEnv && env[keyEnv] ? { apiKey: env[keyEnv] } : {}),
-      ...(baseURL ? { baseURL } : {}),
-    });
+    this.client =
+      client ??
+      new Anthropic({
+        ...(keyEnv && env[keyEnv] ? { apiKey: env[keyEnv] } : {}),
+        ...(baseURL ? { baseURL } : {}),
+      });
   }
 
   private async create(ctx: RunContext, messages: BetaMessageParam[], tools: Anthropic.Beta.BetaTool[]): Promise<{ message: Anthropic.Beta.BetaMessage; note?: string }> {
