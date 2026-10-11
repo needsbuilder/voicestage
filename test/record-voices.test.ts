@@ -252,6 +252,7 @@ describe('another spelling for the voice', () => {
     expect(spoken('The confirmation code is SIM-3AD3FB8C.')).toBe('The confirmation code is SIM-, 3, A, D, 3, F, B, 8, C.');
     // Only a code after "SIM-" is spelled out.
     expect(spoken('SIMPLE: BAD CAFE 2026.')).toBe('SIMPLE: BAD CAFE 2026.');
+    expect(spoken('Con Edison is on my list of official payees. It is now a confirmed payee.')).toBe('Con Edison is on my list of official pay-ees. It is now a confirmed pay-ee.');
   });
 });
 

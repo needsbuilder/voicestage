@@ -94,3 +94,6 @@ recording:
     '800-829-1040': '800, 8 2 9, 1 0 4 0'
     # A confirmation code such as SIM-3AD3FB8C, one character at a time: a comma before each one after "SIM-".
     '/(?<=\bSIM-[0-9A-F]*)(?=[0-9A-F])/': ', '
+    # "payees" comes out close to "pays". With the hyphen both halves of the word are heard.
+    payee: pay-ee
+    payees: pay-ees

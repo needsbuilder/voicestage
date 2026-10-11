@@ -373,7 +373,7 @@ export async function recordScenario(options: RecordOptions): Promise<RecordResu
     const late = [...waits.values()].filter((ms) => ms > settings.beatMs);
     const renderedWhileRecording = late.length > 0 ? { sentences: late.length, longestMs: Math.max(...late) } : undefined;
     if (renderedWhileRecording) {
-      log(`  ${late.length} sentence${late.length === 1 ? ' was' : 's were'} rendered while recording, ready up to ${(renderedWhileRecording.longestMs / 1000).toFixed(1)} s after the device decided to say ${late.length === 1 ? 'it' : 'them'}. A device that waits longer than the beat before it speaks was waiting for that; a second take finds these sentences in the cache.`);
+      log(`  ${late.length} sentence${late.length === 1 ? ' was' : 's were'} rendered while recording, ready up to ${(renderedWhileRecording.longestMs / 1000).toFixed(1)} s after the device decided to say ${late.length === 1 ? 'it' : 'them'}. Where a device waits longer than the beat before it speaks, that is why. What is worded the same on the next take comes from the cache.`);
     }
     await sleep(tailMs);
     if (unrendered.size > 0) {
