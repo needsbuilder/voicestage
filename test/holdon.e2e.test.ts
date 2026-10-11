@@ -145,7 +145,8 @@ describe.skipIf(!available)('Hold On, end to end', () => {
   it('(b) a genuine electric bill: verified, held, approved by Sarah, paid (simulated), receipt shown', async () => {
     await play('b-utility-bill.yaml');
     expect(called('kitchen')).toEqual(['holdon_check_request', 'holdon_place_hold', 'holdon_get_hold (announcement)', 'holdon_pay']);
-    expect(called('phone')).toEqual(['holdon_family_inbox (announcement)', 'holdon_family_decide']);
+    // Sarah approves with a press on the card. With no browser there is no card to press, so the scenario makes the card's call itself.
+    expect(called('phone')).toEqual(['holdon_family_inbox (announcement)', 'holdon_family_decide (scenario)']);
 
     const vars = stage!.vars as { check: any; hold: any; receipt: any };
     expect(vars.check).toMatchObject({ verdict: 'verified', risk_signals: [], payee: { status: 'verified', registry_id: 'con-edison' } });
@@ -156,7 +157,7 @@ describe.skipIf(!available)('Hold On, end to end', () => {
     expect(screen.card!.uri).toBe('ui://holdon/receipt-card.html');
     expect(screen.result.structuredContent).toMatchObject({ receipt_id: vars.receipt.receipt_id });
     expect(said('kitchen').at(-1)).toMatch(/\$182\.40 was paid to Con Edison.*simulated/);
-    expect(said('kitchen').join(' ')).toMatch(/Sarah said yes to the \$182\.40 payment to Con Edison\. Sarah added a note: "Looks right, Mom\."/);
+    expect(said('kitchen').join(' ')).toMatch(/Sarah said yes to the \$182\.40 payment to Con Edison\. I can make the payment whenever you're ready\./);
 
     expect((await call('kitchen', 'holdon_get_hold', { hold_id: vars.hold.hold_id })).structuredContent).toMatchObject({ status: 'paid', receipt: { simulated: true } });
     expect((await call('kitchen', 'holdon_list_holds', { status: 'paid' })).structuredContent).toMatchObject({ count: 1 });

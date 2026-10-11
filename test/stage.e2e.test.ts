@@ -5,7 +5,7 @@
  * proactive announcement, skills and the scenario runner.
  */
 import { afterEach, describe, expect, it } from 'vitest';
-import { loadScenarioFile } from '../src/core/scenario/schema.js';
+import { loadScenarioFile, parseScenario } from '../src/core/scenario/schema.js';
 import type { Stage } from '../src/core/stage.js';
 import { join } from 'node:path';
 import { exampleConfig, questions, ROOT, speech, startStage, tools } from './helpers.js';
@@ -62,6 +62,45 @@ describe('a stage on the example server', () => {
     const shown = started.events.flatMap((event) => (event.type === 'device' && event.patch.progress?.message ? [event.patch.progress.message] : []));
     expect(shown).toEqual(expect.arrayContaining(['Opening the cookbook', 'Reading the recipe']));
     expect(shown.filter((message) => /Fulfilling input required/.test(message))).toEqual([]);
+  });
+
+  it('leaves a call step to the card when something can press its button, and makes the call itself when nothing can', async () => {
+    ({ stage } = await startStage(exampleConfig()));
+    const phone = stage.device('phone')!;
+    const scenario = parseScenario('name: Tap\nsteps:\n  - device: phone\n    call: start_timer\n    args: { label: tea, seconds: 60 }\n    press: Start again\n    expect:\n      - tool: start_timer\n        result: { label: tea }\n', join(ROOT, 'tap.yaml'));
+
+    // Nothing to press with: the scenario makes the call, and the result goes on the screen.
+    const direct = await (await stage.play(scenario, { mode: 'scripted', reset: true })).done;
+    expect(direct.status).toBe('passed');
+    expect(tools(phone.snapshot().timeline).map((entry) => entry.origin)).toEqual(['scenario']);
+
+    // Something that presses the button: here it does what the card does, a call through the host.
+    const pressed: string[] = [];
+    const run = await stage.play(scenario, {
+      mode: 'scripted',
+      reset: true,
+      pressCard: async (deviceId, label) => {
+        pressed.push(`${deviceId}: ${label}`);
+        setTimeout(() => void phone.callServerTool('kitchen', 'start_timer', { label: 'tea', seconds: 60 }, 'card'), 30);
+      },
+    });
+    expect((await run.done).status).toBe('passed');
+    expect(pressed).toEqual(['phone: Start again']);
+    expect(tools(phone.snapshot().timeline).map((entry) => entry.origin)).toEqual(['card']);
+
+    // A button that makes no call fails the step, and says why.
+    const dead = await (await stage.play(scenario, { mode: 'scripted', reset: true, pressCard: async () => undefined, pressTimeoutMs: 200 })).done;
+    expect(dead).toMatchObject({ status: 'failed', steps: [{ error: 'Nothing called start_timer from the card within 0.2 seconds.' }] });
+  });
+
+  it('allows a line more time when lines for other devices are queued before it in the browser', async () => {
+    ({ stage } = await startStage(exampleConfig()));
+    const alone = stage.speechQueued('a', 'x'.repeat(100));
+    const behind = stage.speechQueued('b', 'x'.repeat(100));
+    expect(behind).toBeGreaterThan(alone + 6000);
+    stage.speechFinished('a');
+    stage.speechFinished('b');
+    expect(stage.speechQueued('c', 'x'.repeat(100))).toBe(alone);
   });
 
   it('plays the second example scenario on the phone', async () => {

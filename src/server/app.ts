@@ -6,14 +6,12 @@
  * (and `Origin`, when a browser sends one), because the API can make tool
  * calls with the tokens in your configuration.
  */
-import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import type { Server as HttpServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { join } from 'node:path';
 import express, { type Express, type NextFunction, type Request, type Response } from 'express';
 import type { JsonObject, StageEvent, ToolOrigin, UtteranceSource } from '../shared/types.js';
-import { estimateSpeechMs } from '../core/device.js';
 import { errorMessage } from '../core/mcp.js';
 import type { Stage } from '../core/stage.js';
 
@@ -59,21 +57,6 @@ export function createStageApp(options: StageAppOptions): Express {
     return device;
   };
   const body = (req: Request): JsonObject => (req.body && typeof req.body === 'object' ? (req.body as JsonObject) : {});
-
-  // Cues: a scenario asks the UI to show (and voice) a person's line, and waits until it has.
-  const cues = new Map<string, () => void>();
-  const cue = (deviceId: string, text: string): Promise<void> =>
-    new Promise((resolve) => {
-      const id = randomUUID();
-      const done = () => {
-        if (!cues.delete(id)) return;
-        clearTimeout(timer);
-        resolve();
-      };
-      const timer = setTimeout(done, estimateSpeechMs(text) * 1.5 + 2500);
-      cues.set(id, done);
-      stage.emit({ type: 'cue', id, deviceId, text });
-    });
 
   app.get('/api/state', (_req, res) => {
     res.json(stage.snapshot());
@@ -199,7 +182,7 @@ export function createStageApp(options: StageAppOptions): Express {
         pacing: body(req).pacing === 'step' ? 'step' : 'auto',
         gapMs: typeof body(req).gapMs === 'number' ? (body(req).gapMs as number) : 900,
         reset: body(req).reset !== false,
-        beforeSay: cue,
+        beforeSay: (deviceId, text) => stage.cue(deviceId, text),
       });
       res.status(202).json(run.state);
     } catch (error) {
@@ -214,7 +197,7 @@ export function createStageApp(options: StageAppOptions): Express {
 
   app.post('/api/scenarios/stop', (_req, res) => {
     stage.activeRun?.stop();
-    for (const done of [...cues.values()]) done();
+    stage.releaseCues();
     res.json({ ok: true });
   });
 
@@ -224,7 +207,7 @@ export function createStageApp(options: StageAppOptions): Express {
   });
 
   app.post('/api/cues/:id/done', (req, res) => {
-    cues.get(String(req.params.id))?.();
+    stage.cueDone(String(req.params.id));
     res.json({ ok: true });
   });
 

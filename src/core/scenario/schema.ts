@@ -30,6 +30,9 @@
  *     - device: phone
  *       call: approve_order                     # a tool call straight from the device, as a tap on a card makes
  *       args: { id: "{{check.id}}" }
+ *       press: Approve                          # optional: the button on the card that makes this call. When a
+ *                                               # scenario is recorded, that button is really pressed and the card
+ *                                               # makes the call; everywhere else the call is made directly.
  *       show: false                             # optional: leave the screen as it is (setup and checks)
  *       expect:
  *         - tool: approve_order
@@ -108,6 +111,8 @@ const StepSchema = z
     save: z.string().regex(/^[a-z_][a-z0-9_]*$/i).optional(),
     /** For a `call` step: `false` makes the call without changing what the screen shows (setup and checks). */
     show: z.boolean().optional(),
+    /** For a `call` step: the visible label of the button on the card that makes this call. */
+    press: z.string().min(1).optional(),
     wait_for: WaitForSchema.optional(),
     pause: z.number().min(0).max(120).optional(),
     expect: z.array(ExpectSchema).optional(),
@@ -120,7 +125,7 @@ const StepSchema = z
     if (kinds !== 1) ctx.addIssue({ code: 'custom', message: 'A step needs exactly one of "say", "call", "wait_for" or "pause".' });
     if (step.pause === undefined && !step.device) ctx.addIssue({ code: 'custom', message: 'This step needs a "device".' });
     if (step.script && step.say === undefined) ctx.addIssue({ code: 'custom', message: '"script" belongs to a "say" step.' });
-    if ((step.args || step.save || step.show !== undefined) && step.call === undefined) ctx.addIssue({ code: 'custom', message: '"args", "save" and "show" belong to a "call" step.' });
+    if ((step.args || step.save || step.show !== undefined || step.press !== undefined) && step.call === undefined) ctx.addIssue({ code: 'custom', message: '"args", "save", "show" and "press" belong to a "call" step.' });
   });
 export type RawStep = z.infer<typeof StepSchema>;
 
@@ -162,7 +167,7 @@ function kindOf(step: RawStep): StepKind {
 function labelOf(step: RawStep, kind: StepKind): string {
   if (step.label) return step.label;
   if (kind === 'say') return `${step.device} hears: "${step.say}"`;
-  if (kind === 'call') return `${step.device} calls ${step.call}`;
+  if (kind === 'call') return step.press ? `${step.device} presses "${step.press}"` : `${step.device} calls ${step.call}`;
   if (kind === 'wait_for') return `${step.device} waits for ${step.wait_for!.event}`;
   return `Pause ${step.pause}s`;
 }

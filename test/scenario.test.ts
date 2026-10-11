@@ -60,6 +60,12 @@ describe('scenario files', () => {
     expect(summarizeScenario(scenario).steps).toHaveLength(5);
   });
 
+  it('lets a call step name the button that makes the call', () => {
+    const scenario = parseScenario('name: Tap\nsteps:\n  - device: phone\n    call: approve_order\n    args: { id: 7 }\n    press: Approve\n', '/s/tap.yaml');
+    expect(scenario.steps[0]).toMatchObject({ kind: 'call', call: 'approve_order', press: 'Approve', label: 'phone presses "Approve"' });
+    expect(() => parseScenario('name: Tap\nsteps:\n  - device: phone\n    say: Hello\n    press: Approve\n', '/s/tap.yaml')).toThrow(/"press" belong to a "call" step/);
+  });
+
   it('explains what is wrong, naming the step', () => {
     const broken = (steps: string) => () => parseScenario(`name: x\nsteps:\n${steps}`, 'broken.yaml');
     expect(broken('  - device: a\n    say: hi\n    call: tool')).toThrow(/step 1: A step needs exactly one of "say", "call", "wait_for" or "pause"/);

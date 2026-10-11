@@ -55,6 +55,19 @@ export interface DeviceHost {
   emit(event: StageEvent): void;
   /** True when at least one browser is watching: speech is then paced by the browser. */
   hasListeners(): boolean;
+  /**
+   * How much longer than usual to wait for a browser to report that a line has
+   * been spoken, before going on without it. 1 when absent. A recording raises
+   * it: there every line waits its turn, and must never be cut short.
+   */
+  patience?: number;
+  /**
+   * A line is going to a browser to be spoken. A browser says one line at a
+   * time, whichever device it is for, so how long this one may take depends on
+   * everything queued before it. Returns the longest to wait for it, in milliseconds.
+   */
+  speechQueued?(id: string, text: string): number;
+  speechFinished?(id: string): void;
   /** Values saved by scripts and scenario steps. */
   vars: Record<string, unknown>;
   scriptedLines(): ScriptedLine[];
@@ -431,7 +444,33 @@ export class Device {
   private update<E extends TimelineEntry>(entry: E, changes: Partial<E>): E {
     Object.assign(entry, changes);
     if (!this.closed) this.host.emit({ type: 'timeline', deviceId: this.id, entry });
+    if (entry.kind === 'tool' && entry.status !== 'running') for (const watcher of [...this.toolWatchers]) watcher(entry);
     return entry;
+  }
+
+  private readonly toolWatchers = new Set<(entry: ToolEntry) => void>();
+
+  /**
+   * Resolves when a call to this tool, from this origin, next finishes. This is
+   * how a scenario follows a card: a button is pressed in the browser, and the
+   * card makes the call through the host.
+   */
+  waitForToolCall(match: { name: string; origin?: ToolOrigin; timeoutMs?: number }): Promise<TurnRecord & { result: ToolResult }> {
+    const timeoutMs = match.timeoutMs ?? 15_000;
+    return new Promise((resolve, reject) => {
+      const watcher = (entry: ToolEntry) => {
+        if (entry.name !== match.name || (match.origin && entry.origin !== match.origin)) return;
+        clearTimeout(timer);
+        this.toolWatchers.delete(watcher);
+        // Let the caller of the tool finish its own bookkeeping (the screen it keeps) first.
+        setImmediate(() => resolve({ turn: entry.turn ?? '', entries: entry.turn ? this.entriesOf(entry.turn) : [entry], result: entry.result ?? {} }));
+      };
+      const timer = setTimeout(() => {
+        this.toolWatchers.delete(watcher);
+        reject(new Error(`Nothing called ${match.name}${match.origin ? ` from the ${match.origin}` : ''} within ${Number((timeoutMs / 1000).toFixed(1))} seconds.`));
+      }, timeoutMs);
+      this.toolWatchers.add(watcher);
+    });
   }
 
   entriesOf(turn: string): TimelineEntry[] {
@@ -463,14 +502,16 @@ export class Device {
         if (!waiting) return;
         clearTimeout(waiting.timer);
         this.speech.delete(line.id);
+        this.host.speechFinished?.(line.id);
         this.refreshStatus();
         this.flushQuiet();
         resolve();
       };
-      // The browser normally acknowledges; the timer covers a closed tab. Earlier
-      // sentences are still being spoken, so allow for those too.
+      // The browser normally acknowledges; the timer covers a closed tab. Lines queued
+      // before this one, on any device, are spoken first, so allow for those too.
       const backlog = [...this.speech.keys()].length;
-      const timer = setTimeout(finish, estimateSpeechMs(clean) * 1.6 + backlog * 4000 + 3000);
+      const longest = this.host.speechQueued?.(line.id, clean) ?? (estimateSpeechMs(clean) * 1.6 + backlog * 4000 + 3000) * (this.host.patience ?? 1);
+      const timer = setTimeout(finish, longest);
       timer.unref?.();
       this.speech.set(line.id, { resolve: finish, timer });
       this.refreshStatus();

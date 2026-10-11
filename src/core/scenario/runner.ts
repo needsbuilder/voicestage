@@ -13,7 +13,7 @@
  */
 import { randomUUID } from 'node:crypto';
 import { matchValue, renderValue, TemplateError } from '../../shared/template.js';
-import type { CheckResult, ElicitationEntry, JsonObject, ScenarioRunState, ScreenContent, SpeechEntry, StepResult, TimelineEntry, ToolEntry } from '../../shared/types.js';
+import type { CheckResult, ElicitationEntry, JsonObject, ScenarioRunState, ScreenContent, SpeechEntry, StepResult, TimelineEntry, ToolEntry, ToolResult } from '../../shared/types.js';
 import type { Device, TurnRecord } from '../device.js';
 import { summarizeScenario, type Expectation, type Scenario, type ScenarioStep } from './schema.js';
 
@@ -35,6 +35,14 @@ export interface RunOptions {
   onUpdate?: (state: ScenarioRunState) => void;
   /** Called before a `say` step when paced, so a UI can show (or voice) the person's line first. Resolves when it is time to go on. */
   beforeSay?: (deviceId: string, text: string) => Promise<void>;
+  /**
+   * Press a button on the card a device is showing, the way a person would.
+   * When this is given, a `call` step that names a `press` label is left to
+   * the card: the button is pressed and the step waits for the card's own call.
+   */
+  pressCard?: (deviceId: string, label: string) => Promise<void>;
+  /** How long to wait for a pressed card to make its call, in milliseconds. */
+  pressTimeoutMs?: number;
 }
 
 export interface ScenarioRun {
@@ -196,7 +204,16 @@ export function startScenario(host: ScenarioHost, scenario: Scenario, options: R
       device.clearQueuedAnswers();
     } else if (step.kind === 'call') {
       const args = renderValue(step.args ?? {}, host.vars, true) as JsonObject;
-      const pressed = await device.press(step.call!, args, 'scenario', { show: step.show });
+      let pressed: TurnRecord & { result: ToolResult };
+      if (step.press && options.pressCard) {
+        // Something can press the real button: the card makes the call, as it would for a person.
+        const made = device.waitForToolCall({ name: step.call!, origin: 'card', timeoutMs: options.pressTimeoutMs ?? 15_000 });
+        made.catch(() => undefined);
+        await options.pressCard(device.id, step.press);
+        pressed = await made;
+      } else {
+        pressed = await device.press(step.call!, args, 'scenario', { show: step.show });
+      }
       record = pressed;
       host.vars.last = pressed.result.structuredContent ?? {};
       if (step.save) host.vars[step.save] = pressed.result.structuredContent ?? {};

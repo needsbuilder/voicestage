@@ -2,7 +2,8 @@ name: A genuine electric bill
 description: >
   Margaret asks to pay her Con Edison bill. The payee is on the registry of
   official payees, the amount is over the family's limit, so the payment is
-  held. Sarah approves, the (simulated) payment is made and a receipt is shown.
+  held. Sarah approves with one press on her phone, the (simulated) payment is
+  made and a receipt is shown.
 config: ../voicestage.config.yaml
 
 steps:
@@ -43,16 +44,15 @@ steps:
         result: { holds.0.can_approve: true, holds.0.amount_usd: 182.4, holds.0.payee_status: verified }
       - screen: ui://holdon/approval-card.html
 
+  # Sarah does not have to say anything: she presses Approve on the card. When this
+  # scenario is recorded, the button is really pressed and the card makes the call;
+  # from the command line, where there is no card to press, the call is made directly.
   - device: phone
-    say: "That's her usual electric bill. Approve it, and tell her it looks right."
-    script:
-      - call: holdon_family_decide
-        args:
-          hold_id: "{{hold.hold_id}}"
-          decision: approve
-          note: "Looks right, Mom."
-        save: decision
-      - say: "{{decision.say_to_user}}"
+    call: holdon_family_decide
+    args:
+      hold_id: "{{hold.hold_id}}"
+      decision: approve
+    press: Approve
     expect:
       - tool: holdon_family_decide
         args: { decision: approve }

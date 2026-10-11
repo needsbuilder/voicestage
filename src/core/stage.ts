@@ -2,9 +2,10 @@
  * The stage: every device, the loaded scenarios, and the stream of events that
  * a UI (or a test) can listen to.
  */
+import { randomUUID } from 'node:crypto';
 import { PRODUCT_VERSION, type ScenarioRunState, type StageEvent, type StageSnapshot } from '../shared/types.js';
 import type { StageConfig } from './config.js';
-import { Device, type DeviceHost } from './device.js';
+import { Device, estimateSpeechMs, type DeviceHost } from './device.js';
 import type { ScriptedLine } from './providers/index.js';
 import { startScenario, type RunOptions, type ScenarioRun } from './scenario/runner.js';
 import { loadScenarios, summarizeScenario, type Scenario } from './scenario/schema.js';
@@ -15,6 +16,8 @@ export interface StageOptions {
   provider?: string;
   /** Extra scenario files or folders, on top of the ones in the configuration. */
   scenarioPaths?: string[];
+  /** See `DeviceHost.patience`. */
+  patience?: number;
   log?: (line: string) => void;
 }
 
@@ -29,6 +32,7 @@ export class Stage implements DeviceHost {
   readonly vars: Record<string, unknown> = {};
   readonly env: NodeJS.ProcessEnv;
   readonly providerOverride: string | undefined;
+  readonly patience: number;
   scenarios: Scenario[] = [];
   readonly scenarioErrors: Array<{ path: string; message: string }> = [];
   private readonly listeners = new Set<(event: StageEvent) => void>();
@@ -43,6 +47,7 @@ export class Stage implements DeviceHost {
   ) {
     this.env = options.env ?? process.env;
     this.providerOverride = options.provider;
+    this.patience = options.patience ?? 1;
     this.log = options.log ?? (() => undefined);
     for (const device of config.devices) this.devices.set(device.id, new Device(device, this));
     this.reloadScenarios();
@@ -178,6 +183,56 @@ export class Stage implements DeviceHost {
   }
 
   private starting = false;
+
+  // --- speech in progress ---------------------------------------------------------
+
+  /** Lines a browser has been asked to speak and has not reported back on, with about how long each takes. */
+  private readonly unspoken = new Map<string, number>();
+
+  speechQueued(id: string, text: string): number {
+    let ahead = 0;
+    for (const ms of this.unspoken.values()) ahead += ms;
+    const own = estimateSpeechMs(text);
+    this.unspoken.set(id, own);
+    return ((ahead + own) * 1.6 + 3000) * this.patience;
+  }
+
+  speechFinished(id: string): void {
+    this.unspoken.delete(id);
+  }
+
+  // --- cues -------------------------------------------------------------------
+
+  private readonly cues = new Map<string, () => void>();
+
+  /**
+   * A scenario is about to speak a person's line: ask whoever is watching to
+   * show (and voice) it first. Resolves when they report back with `cueDone`,
+   * or after about as long as the line would take when nobody does.
+   */
+  cue(deviceId: string, text: string): Promise<void> {
+    return new Promise((resolve) => {
+      const id = randomUUID();
+      const done = () => {
+        if (!this.cues.delete(id)) return;
+        clearTimeout(timer);
+        this.speechFinished(id);
+        resolve();
+      };
+      const timer = setTimeout(done, this.speechQueued(id, text));
+      this.cues.set(id, done);
+      this.emit({ type: 'cue', id, deviceId, text });
+    });
+  }
+
+  cueDone(id: string): void {
+    this.cues.get(id)?.();
+  }
+
+  /** Let every waiting cue go, for example when a scenario is stopped. */
+  releaseCues(): void {
+    for (const done of [...this.cues.values()]) done();
+  }
 
   clearRun(): void {
     if (this.run) return;
