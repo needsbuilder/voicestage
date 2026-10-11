@@ -233,9 +233,19 @@ export async function recordScenario(options: RecordOptions): Promise<RecordResu
         throw error;
       }
     };
+    // A device's line is rendered when the stage decides to say it. How long each sentence then took to be ready
+    // is kept: with a slow voice program that is where a first take gets its long pauses from.
+    const waits = new Map<string, number>();
     const prepareLine = (deviceId: string, sentence: string) => {
       const request = requestFor(deviceId, 'assistant', sentence);
-      return request ? prepare(request).catch(() => undefined) : undefined;
+      if (!request) return undefined;
+      const asked = Date.now();
+      return prepare(request).then(
+        (clip) => {
+          if (!waits.has(clip.id)) waits.set(clip.id, Date.now() - asked);
+        },
+        () => undefined,
+      );
     };
     const ahead: Array<Promise<unknown>> = [];
     // One short clip per voice first: it sets each voice's loudness, and the first use of a voice is the slow one.
@@ -359,6 +369,12 @@ export async function recordScenario(options: RecordOptions): Promise<RecordResu
       log(`  ${step.status === 'passed' ? 'ok  ' : step.status === 'failed' ? 'FAIL' : '-   '} ${step.index + 1}. ${step.label}${step.error ? `: ${step.error}` : ''}`);
       for (const check of step.checks) if (!check.ok) log(`         ${check.label}: ${check.detail ?? 'not met'}`);
     }
+    // Sentences that were not ready within a beat of being asked for: these were rendered while the camera was rolling.
+    const late = [...waits.values()].filter((ms) => ms > settings.beatMs);
+    const renderedWhileRecording = late.length > 0 ? { sentences: late.length, longestMs: Math.max(...late) } : undefined;
+    if (renderedWhileRecording) {
+      log(`  ${late.length} sentence${late.length === 1 ? ' was' : 's were'} rendered while recording, ready up to ${(renderedWhileRecording.longestMs / 1000).toFixed(1)} s after the device decided to say ${late.length === 1 ? 'it' : 'them'}. A device that waits longer than the beat before it speaks was waiting for that; a second take finds these sentences in the cache.`);
+    }
     await sleep(tailMs);
     if (unrendered.size > 0) {
       throw new RecordError(`Nothing was written, because some lines could not be rendered and would have been silent:\n${[...unrendered].map((reason) => `  - ${reason}`).join('\n')}`);
@@ -388,7 +404,7 @@ export async function recordScenario(options: RecordOptions): Promise<RecordResu
       const captions = new Map(devices.filter((device) => device.captions).map((device) => [device.id, device.captions as Rect]));
       report = await verifyRecording({ file: videoFile, items, captions, expected: { width, height, fps, duration }, window: Math.min(settings.gapMs, settings.beatMs) / 1000 });
     }
-    writeFileSync(timelineFile, `${JSON.stringify(timelineDocument({ name, scenario, state, settings, leadMs, tailMs, width, height, fps, frames, duration, devices, items, steps, report, renderer, pronounce: config.recording.pronounce }), null, 2)}\n`);
+    writeFileSync(timelineFile, `${JSON.stringify(timelineDocument({ name, scenario, state, settings, leadMs, tailMs, width, height, fps, frames, duration, devices, items, steps, report, renderer, pronounce: config.recording.pronounce, renderedWhileRecording }), null, 2)}\n`);
     return { video: videoFile, timeline: timelineFile, duration, run: state, report };
   } finally {
     encoder?.kill();
@@ -422,6 +438,7 @@ function timelineDocument(input: {
   report?: VerifyReport;
   renderer: VoiceRenderer;
   pronounce: Record<string, string>;
+  renderedWhileRecording?: { sentences: number; longestMs: number };
 }): Record<string, unknown> {
   const { report } = input;
   return {
@@ -442,6 +459,8 @@ function timelineDocument(input: {
       renderer: input.renderer.name,
       command: input.renderer instanceof CommandRenderer ? input.renderer.commandLine : undefined,
       pronounce: Object.keys(input.pronounce).length > 0 ? input.pronounce : undefined,
+      // Sentences of the devices that were not in the cache and took longer than a beat to render, and the longest of those waits.
+      renderedWhileRecording: input.renderedWhileRecording,
     },
     devices: input.devices.map((device) => ({
       id: device.id,

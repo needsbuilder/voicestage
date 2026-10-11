@@ -37,6 +37,11 @@ English ones were tried here.
 
 Output: 24 kHz, mono, 16-bit.
 
+The model runs on four processor threads unless --threads says otherwise.
+Measured on an Apple M4 Pro, one sentence in a fresh process was ready as
+soon that way as with all twelve cores (about two seconds), and it leaves the
+rest of the machine to the recording that is going on at the same time.
+
 Kokoro's weights are published under Apache-2.0 (hexgrad/Kokoro-82M) and
 kokoro-onnx under MIT. This script is not part of either project.
 """
@@ -80,15 +85,20 @@ def main() -> None:
     parser.add_argument("--out", help="where to write the WAV file")
     parser.add_argument("--model", help=f"path of {MODEL_FILE} (or KOKORO_MODEL, or KOKORO_DIR)")
     parser.add_argument("--voices", help=f"path of {VOICES_FILE} (or KOKORO_VOICES, or KOKORO_DIR)")
+    parser.add_argument("--threads", type=int, default=4, help="processor threads for the model (default 4)")
     parser.add_argument("--list", action="store_true", help="print the voice names and stop")
     args = parser.parse_args()
 
     model, voices = model_paths(args)
     # Imported here, so that a missing file is reported without loading the runtime first.
     import numpy as np
+    import onnxruntime
     from kokoro_onnx import Kokoro
 
-    kokoro = Kokoro(model, voices)
+    options = onnxruntime.SessionOptions()
+    options.intra_op_num_threads = max(1, min(args.threads, os.cpu_count() or args.threads))
+    session = onnxruntime.InferenceSession(model, sess_options=options, providers=["CPUExecutionProvider"])
+    kokoro = Kokoro.from_session(session, voices)
     names = sorted(kokoro.get_voices())
     if args.list:
         print("\n".join(names))

@@ -21,6 +21,7 @@ import { buildTimeline } from '../src/record/timeline.js';
 import { compilePronunciations, PronounceError, respell } from '../src/shared/pronounce.js';
 import type { ClipRequest, RecordingMark } from '../src/shared/recording.js';
 import { commandProblem, fillCommand, splitCommand } from '../src/shared/voice-command.js';
+import { chooseVoice } from '../src/shared/voices.js';
 import { ROOT } from './helpers.js';
 
 const hasFfmpeg = spawnSync('ffmpeg', ['-version']).status === 0;
@@ -189,6 +190,17 @@ describe('the recording section of the configuration', () => {
       ['af_bella', 'bf_emma', 0.92],
       ['am_michael', 'af_sarah', undefined],
     ]);
+    // In the browser, and for "say", these names are no system voice: the automatic choice is made, as if no name were given.
+    const system = [
+      { name: 'Samantha', lang: 'en-US', localService: true },
+      { name: 'Daniel', lang: 'en-GB', localService: true },
+      { name: 'Moira', lang: 'en-IE', localService: true },
+      { name: 'Tessa', lang: 'en-ZA', localService: true },
+    ];
+    for (const [slot, device] of config.devices.entries()) {
+      expect(chooseVoice(system, { role: 'assistant', slot, slots: 2, name: device.voice.name })).toEqual(chooseVoice(system, { role: 'assistant', slot, slots: 2 }));
+      expect(chooseVoice(system, { role: 'person', slot, slots: 2, name: device.person.voice?.name })).toEqual(chooseVoice(system, { role: 'person', slot, slots: 2 }));
+    }
     // Apart from the voices, it is the same stage as the one recorded with the system voices.
     const plain = loadConfigFile(join(ROOT, 'examples/holdon/voicestage.config.yaml'), {});
     const withoutVoices = (devices: typeof config.devices) => devices.map((device) => ({ ...device, voice: {}, person: { ...device.person, voice: undefined } }));
