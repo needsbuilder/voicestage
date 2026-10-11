@@ -10,6 +10,8 @@ import { existsSync, readFileSync } from 'node:fs';
 import { dirname, isAbsolute, resolve } from 'node:path';
 import { parse as parseYaml } from 'yaml';
 import { z } from 'zod';
+import { compilePronunciations } from '../shared/pronounce.js';
+import { commandProblem, splitCommand } from '../shared/voice-command.js';
 
 export const PROVIDER_IDS = ['scripted', 'anthropic', 'bedrock', 'openai-compatible', 'claude-code'] as const;
 export type ProviderId = (typeof PROVIDER_IDS)[number];
@@ -85,7 +87,10 @@ const DeviceServerSchema = z.union([
 
 const VoiceSchema = z
   .object({
-    /** Name (or part of the name) of a speech synthesis voice installed in the browser. */
+    /**
+     * Name (or part of the name) of a speech synthesis voice installed in the browser.
+     * A recording made with `recording.voices.command` gives this name to that program as it is.
+     */
     name: z.string().optional(),
     lang: z.string().optional(),
     rate: z.number().min(0.5).max(2).optional(),
@@ -120,11 +125,36 @@ const DeviceSchema = z
   })
   .strict();
 
+/** Only read by `voicestage record`. */
+const RecordingSchema = z
+  .object({
+    voices: z
+      .object({
+        /**
+         * A program that renders one sentence to a WAV file, used for every line of a recording
+         * in place of the system voices. A list of arguments, or one string cut at spaces.
+         * See `src/shared/voice-command.ts` for the names in braces it may use.
+         */
+        command: z.union([z.string().min(1), z.array(z.string()).min(1)]),
+        /** A short name for the program, written into the timeline. */
+        name: z
+          .string()
+          .regex(/^[a-z0-9][a-z0-9 ._-]*$/i, 'Use letters, digits, spaces, ".", "-" and "_".')
+          .optional(),
+      })
+      .strict()
+      .optional(),
+    /** Another spelling for the voice, per word or phrase. See `src/shared/pronounce.ts`. */
+    pronounce: z.record(z.string().min(1), z.string()).optional(),
+  })
+  .strict();
+
 const ConfigSchema = z
   .object({
     name: z.string().optional(),
     port: z.number().int().min(0).max(65535).optional(),
     assistant: AssistantSchema.optional(),
+    recording: RecordingSchema.optional(),
     servers: z.record(z.string().regex(/^[a-z0-9][a-z0-9_-]*$/i), ServerSchema).default({}),
     skills: z.record(z.string(), z.string()).default({}),
     devices: z.array(DeviceSchema).min(1, 'Define at least one device.'),
@@ -159,12 +189,27 @@ export interface ResolvedDevice {
   hints: string[];
 }
 
+export interface RecordingConfig {
+  /** The program that renders the voices of a recording. Without it, the system voices are used. */
+  voices?: {
+    /** What the timeline calls it. */
+    name: string;
+    /** The program and its arguments, with the names in braces still to be filled in. */
+    command: string[];
+    /** The folder the program is started in: the folder of the configuration file. */
+    cwd: string;
+  };
+  /** What is written, and how the voice should be given it. */
+  pronounce: Record<string, string>;
+}
+
 export interface StageConfig {
   name: string;
   port?: number;
   /** Absolute path of the file this came from, when there is one. */
   path?: string;
   baseDir: string;
+  recording: RecordingConfig;
   devices: ResolvedDevice[];
   /** Absolute scenario paths (files or folders). */
   scenarioPaths: string[];
@@ -270,9 +315,29 @@ export function resolveConfig(input: unknown, options: { baseDir: string; path?:
     port: raw.port,
     path: options.path,
     baseDir: options.baseDir,
+    recording: resolveRecording(raw.recording, options.baseDir, where),
     devices,
     scenarioPaths: raw.scenarios.map(abs),
   };
+}
+
+function resolveRecording(raw: z.infer<typeof RecordingSchema> | undefined, baseDir: string, where: string): RecordingConfig {
+  const pronounce = raw?.pronounce ?? {};
+  try {
+    compilePronunciations(pronounce);
+  } catch (error) {
+    throw new ConfigError(`${where}: recording.pronounce: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  if (!raw?.voices) return { pronounce };
+  let command: string[];
+  try {
+    command = typeof raw.voices.command === 'string' ? splitCommand(raw.voices.command) : raw.voices.command;
+  } catch (error) {
+    throw new ConfigError(`${where}: recording.voices.command: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  const problem = commandProblem(command);
+  if (problem) throw new ConfigError(`${where}: recording.voices.command cannot render a voice: ${problem}. Example: my-tts --voice {voice} --rate {rate} --out {out} {text}`);
+  return { voices: { name: raw.voices.name ?? 'command', command, cwd: baseDir }, pronounce };
 }
 
 function defaultDeviceName(kind: string): string {

@@ -44,6 +44,8 @@ export interface SentenceTiming {
   /** Whether the caption on the device changes when this sentence starts (a person's whole line is shown at once). */
   caption: boolean;
   clip: string;
+  /** What the voice was given, when that is not the text as written (`recording.pronounce`). */
+  spoken?: string;
 }
 
 interface Base {
@@ -59,7 +61,7 @@ interface Base {
 }
 
 export type TimelineItem =
-  | (Base & { kind: 'utterance'; role: 'person' | 'assistant'; voice: string; sentences: SentenceTiming[] })
+  | (Base & { kind: 'utterance'; role: 'person' | 'assistant'; voice: string; /** What rendered the voice: "say", or the name of the voice command. */ renderer?: string; sentences: SentenceTiming[] })
   | (Base & { kind: 'card'; card: string; tool: string })
   | (Base & { kind: 'tool'; tool: string; origin: string; ok: boolean })
   | (Base & { kind: 'notification' })
@@ -86,8 +88,8 @@ export interface TimelineInput {
   /** Stage events with the wall-clock time at which they were emitted. */
   stageEvents: Array<{ at: number; event: StageEvent }>;
   presses: Press[];
-  /** The voice of each clip, by clip id. */
-  voices: Map<string, string>;
+  /** Each clip by its id: the voice and what rendered it, and the other spelling the voice was given, if any. */
+  clips: Map<string, { voice: string; renderer?: string; spoken?: string }>;
 }
 
 const round = (seconds: number) => Math.round(seconds * 1000) / 1000;
@@ -118,15 +120,20 @@ export function buildTimeline(input: TimelineInput): { items: TimelineItem[]; st
       device: first.deviceId,
       who: first.role === 'person' ? (at?.person ?? first.deviceId) : (at?.name ?? first.deviceId),
       role: first.role,
-      voice: input.voices.get(first.clip) ?? '',
+      voice: input.clips.get(first.clip)?.voice ?? '',
+      renderer: input.clips.get(first.clip)?.renderer,
       text: first.line,
-      sentences: sentences.map((sentence) => ({
-        start: seconds(sentence.at),
-        end: seconds(sentence.at + sentence.ms),
-        text: sentence.text,
-        caption: sentence.role === 'assistant' || sentence.index === 0,
-        clip: sentence.clip,
-      })),
+      sentences: sentences.map((sentence) => {
+        const spoken = input.clips.get(sentence.clip)?.spoken;
+        return {
+          start: seconds(sentence.at),
+          end: seconds(sentence.at + sentence.ms),
+          text: sentence.text,
+          caption: sentence.role === 'assistant' || sentence.index === 0,
+          clip: sentence.clip,
+          ...(spoken === undefined ? {} : { spoken }),
+        };
+      }),
     });
   }
 

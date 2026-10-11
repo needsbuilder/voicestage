@@ -5,7 +5,7 @@
  *   voicestage dev        start the stage with the UI served by Vite (for working on Voicestage itself)
  *   voicestage start      start the stage with the built UI
  *   voicestage scenario   run scenario files and report pass or fail
- *   voicestage record     record a scenario to a video file with sound (macOS)
+ *   voicestage record     record a scenario to a video file with sound
  *   voicestage example-server   run the built-in example MCP server on its own
  */
 import { existsSync } from 'node:fs';
@@ -29,7 +29,7 @@ Usage
   voicestage dev [options]              Start the stage (UI served by Vite)
   voicestage start [options]            Start the stage (built UI; run "npm run build" first)
   voicestage scenario <file...> [options]   Run scenarios and report pass or fail
-  voicestage record <file...> --out <dir>   Record scenarios to video files with sound (macOS)
+  voicestage record <file...> --out <dir>   Record scenarios to video files with sound
   voicestage check-recording <timeline.json...>   Check recordings made earlier, from their timelines
   voicestage example-server [--port N]  Run the built-in example MCP server
 
@@ -59,7 +59,8 @@ Scenario runner
                          every tool call with its arguments and result
   --paced                Leave pauses between steps, as the UI does
 
-Recording (voicestage record; needs macOS, Google Chrome and ffmpeg)
+Recording (voicestage record; needs Google Chrome and ffmpeg. The voices are rendered with the
+macOS "say" command, or with the program named under recording.voices.command in the configuration)
   --out <dir>            Where to write <name>.mp4 and <name>.timeline.json (default: out/recordings)
   --beat <ms>            Shortest pause between two speakers, and after a card appears (default 600)
   --gap <ms>             Pause between two sentences of one line (default 180)
@@ -263,6 +264,7 @@ function numberFlag(name: string, value: string | undefined, min: number, max: n
 async function record(files: string[], flags: Flags): Promise<number> {
   if (files.length === 0) throw new ConfigError('Give at least one scenario file: voicestage record <file...> --out <dir>');
   const { recordScenario, RecordError } = await import('./record/recorder.js');
+  const { SpeechError } = await import('./record/speech.js');
   const size = /^(\d{3,4})x(\d{3,4})$/.exec(flags.size ?? '1920x1080');
   if (!size) throw new ConfigError(`--size expects WIDTHxHEIGHT, for example 1920x1080, got "${flags.size}".`);
   let failed = 0;
@@ -294,7 +296,8 @@ async function record(files: string[], flags: Flags): Promise<number> {
       if (report && !report.ok) for (const problem of report.problems) console.log(`  PROBLEM: ${problem}`);
       if (result.run.status !== 'passed' || (report && !report.ok)) failed += 1;
     } catch (error) {
-      if (error instanceof RecordError) throw new ConfigError(error.message);
+      // Both are things to put right on this machine or in the configuration, not faults to trace.
+      if (error instanceof RecordError || error instanceof SpeechError) throw new ConfigError(error.message);
       throw error;
     }
   }

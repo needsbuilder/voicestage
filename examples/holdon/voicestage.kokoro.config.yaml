@@ -1,0 +1,96 @@
+# The Hold On stage of voicestage.config.yaml, for recording with Kokoro voices
+# (a neural voice that runs on this computer) in place of the system voices.
+# Servers, skills and devices are the same as in that file; what is added is a
+# voice name for each speaker and the "recording" section at the end.
+#
+# It needs uv (https://docs.astral.sh/uv/) and the two Kokoro model files;
+# scripts/tts/kokoro.py says where to get them. Then, with Hold On running:
+#
+#   KOKORO_DIR=/path/to/the/model/files npm run record -- \
+#     examples/holdon/scenarios/b-utility-bill.yaml \
+#     --config examples/holdon/voicestage.kokoro.config.yaml --out out/recordings-kokoro
+#
+# In the browser (npm run dev) these voice names mean nothing, so the stage
+# falls back to its own choice of system voices.
+
+name: Hold On
+
+assistant:
+  provider: scripted
+
+servers:
+  holdon:
+    url: ${HOLDON_URL:-http://localhost:8787}/mcp
+    events:
+      url: ${HOLDON_URL:-http://localhost:8787}/events
+      announce:
+        # Sarah's phone lights up when Margaret's request is put on hold.
+        - on: hold.created
+          devices: [phone]
+          when: { hold.blocked: true }
+          say: "Hold On stopped a payment request from {{hold.member.name}}. The details are on your screen."
+          show: { tool: holdon_family_inbox }
+        - on: hold.created
+          devices: [phone]
+          say: "{{hold.member.name}} is asking to make a payment. The details are on your screen."
+          show: { tool: holdon_family_inbox }
+        # Margaret's display speaks up when Sarah has decided.
+        - on: hold.decided
+          devices: [kitchen]
+          say: "{{hold.decision.by}} has answered."
+          show: { tool: holdon_get_hold, args: { hold_id: "{{hold.hold_id}}" } }
+          then_say: "{{result.say_to_user}}"
+
+skills:
+  # The Agent Skill that ships with Hold On. HOLDON_DIR is the Hold On checkout.
+  holdon-money-safety: ${HOLDON_DIR:-../../../holdon}/skills/holdon-money-safety
+
+devices:
+  - id: kitchen
+    name: Kitchen display
+    kind: display
+    # Margaret speaks a little slower than the others.
+    person: { name: Margaret, role: the person this assistant looks after, voice: { name: bf_emma, rate: 0.92 } }
+    servers:
+      - id: holdon
+        headers:
+          Authorization: Bearer ${HOLDON_MEMBER_TOKEN:-demo-member-margaret}
+    skills: [holdon-money-safety]
+    voice: { name: af_bella }
+    hints:
+      - "My Con Edison bill came in the mail. It's $182.40. Please pay it with my card."
+
+  - id: phone
+    name: Sarah's phone
+    kind: phone
+    person: { name: Sarah, role: "Margaret's daughter and trusted contact", voice: { name: af_sarah } }
+    servers:
+      - id: holdon
+        headers:
+          Authorization: Bearer ${HOLDON_CONTACT_TOKEN:-demo-contact-sarah}
+    skills: [holdon-money-safety]
+    voice: { name: am_michael }
+    hints:
+      - "Is anything waiting for me?"
+
+scenarios:
+  - scenarios
+
+recording:
+  voices:
+    name: kokoro
+    # Started in this file's folder, once for each sentence. No shell is involved.
+    command: uv run -q ../../scripts/tts/kokoro.py --voice {voice} --rate {rate} --lang {lang} --text-file {text_file} --out {out}
+
+  # Other spellings for the voice. The captions keep what is written.
+  pronounce:
+    # kokoro-onnx reads "$2,000" as "dollar two thousand": say the amount first.
+    # "the $1,500 payment" is "the 1,500 dollar payment"; anywhere else it is "1,500 dollars".
+    '/\$([\d,]+)\.(\d\d)(?= (?:payment|deposit))/': '$1 dollar and $2 cent'
+    '/\$([\d,]+)(?= (?:payment|deposit))/': '$1 dollar'
+    '/\$([\d,]+)\.(\d\d)/': '$1 dollars and $2 cents'
+    '/\$([\d,]+)/': '$1 dollars'
+    # The IRS phone number, which it reads as "eight hundred dash eight hundred twenty-nine dash one thousand forty".
+    '800-829-1040': '800, 8 2 9, 1 0 4 0'
+    # A confirmation code such as SIM-3AD3FB8C, one character at a time: a comma before each one after "SIM-".
+    '/(?<=\bSIM-[0-9A-F]*)(?=[0-9A-F])/': ', '

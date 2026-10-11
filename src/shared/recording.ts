@@ -39,6 +39,8 @@ export interface Clip {
   ms: number;
   /** The voice it was rendered with. */
   voice: string;
+  /** What rendered it: "say", or the name the configuration gives its voice command. */
+  renderer: string;
 }
 
 /** Things the page reports, each with the wall-clock time (`Date.now()`) at which it was on screen. */

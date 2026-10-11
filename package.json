@@ -15,6 +15,7 @@
     "dist",
     "examples",
     "scenarios",
+    "scripts/tts",
     "voicestage.config.yaml",
     "README.md",
     "LICENSE"

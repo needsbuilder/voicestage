@@ -3,8 +3,9 @@
  *
  * A stage is started in this process, a headless Chrome opens it, and the
  * scenario is played with the scripted provider. Chrome's screencast gives the
- * picture; the voices are rendered with `say` (see `speech.ts`), because a
- * capture of the screen cannot hear a browser speak. The page shows each
+ * picture; the voices are rendered outside the browser, with `say` or with a
+ * program named in the configuration (see `speech.ts` and `renderers.ts`),
+ * because a capture of the screen cannot hear a browser speak. The page shows each
  * sentence for exactly as long as its clip lasts and reports when it did, so
  * the sound track is laid out by the same clock as the picture.
  *
@@ -21,12 +22,14 @@ import type { StageConfig } from '../core/config.js';
 import type { Scenario } from '../core/scenario/schema.js';
 import { Stage } from '../core/stage.js';
 import { serveStage } from '../server/app.js';
+import { compilePronunciations } from '../shared/pronounce.js';
 import type { ClipRequest, RecordingMark, RecordingSettings } from '../shared/recording.js';
 import { splitSentences } from '../shared/sentences.js';
 import { PRODUCT_NAME, PRODUCT_VERSION, type ScenarioRunState, type StageEvent } from '../shared/types.js';
 import { findChrome } from './chrome.js';
 import { DEVICE_GEOMETRY, findButtonCall, pointerCall, POINTER_SCRIPT } from './in-page.js';
-import { mixTrack, SAMPLE_RATE, Speech, writeWav, type RenderedClip } from './speech.js';
+import { CommandRenderer, createRenderer, platformProblem, speakersWithoutVoice } from './renderers.js';
+import { mixTrack, SAMPLE_RATE, Speech, writeWav, type RenderedClip, type VoiceRenderer } from './speech.js';
 import { buildTimeline, type Press, type Rect, type TimelineDevice, type TimelineItem } from './timeline.js';
 import { checksSection, verifyRecording, type VerifyReport } from './verify.js';
 import { FrameClock, mux, VideoEncoder } from './video.js';
@@ -77,12 +80,9 @@ export interface RecordResult {
 }
 
 /** What a recording needs from the machine, checked before anything is started, with a plain reason when it is missing. */
-export async function checkRecordingSupport(options: { chromePath?: string; env?: NodeJS.ProcessEnv } = {}): Promise<{ chrome: string }> {
-  if (process.platform !== 'darwin') {
-    throw new RecordError(
-      `Recording renders the voices with the macOS "say" command, so it only works on macOS (this is ${process.platform}). On other systems, play the scenario in the browser with ?present=1 and use a screen recorder.`,
-    );
-  }
+export async function checkRecordingSupport(options: { chromePath?: string; env?: NodeJS.ProcessEnv; recording?: StageConfig['recording'] } = {}): Promise<{ chrome: string }> {
+  const problem = platformProblem(process.platform, options.recording ?? { pronounce: {} });
+  if (problem) throw new RecordError(problem);
   for (const tool of ['ffmpeg', 'ffprobe']) {
     await run(tool, ['-version']).catch(() => {
       throw new RecordError(`Recording needs ${tool}, which was not found. Install FFmpeg (for example "brew install ffmpeg") and try again.`);
@@ -169,9 +169,14 @@ export async function recordScenario(options: RecordOptions): Promise<RecordResu
   const tailMs = options.tailMs ?? 1500;
   if (!existsSync(join(options.uiDir, 'index.html'))) throw new RecordError('The UI has not been built yet. Run "npm run build" first.');
 
-  const { chrome } = await checkRecordingSupport({ chromePath: options.chromePath, env: options.env });
-  const speech = new Speech();
-  await speech.voiceList();
+  const { chrome } = await checkRecordingSupport({ chromePath: options.chromePath, env: options.env, recording: config.recording });
+  const unvoiced = speakersWithoutVoice(config, scenario);
+  if (unvoiced.length > 0) {
+    throw new RecordError(`The voices are rendered by a program (recording.voices.command), which has no list of voices to choose from, so every speaker needs a voice name in the configuration:\n${unvoiced.map((line) => `  - ${line}`).join('\n')}`);
+  }
+  const renderer = createRenderer(config.recording, options.env);
+  const speech = new Speech({ renderer, pronounce: compilePronunciations(config.recording.pronounce) });
+  await renderer.check();
 
   const outDir = resolve(options.outDir);
   mkdirSync(outDir, { recursive: true });
@@ -216,10 +221,17 @@ export async function recordScenario(options: RecordOptions): Promise<RecordResu
       const prefs = role === 'assistant' ? device.voice : { lang: device.voice.lang, ...device.person.voice };
       return { deviceId, role, slot, slots: snapshot.devices.length, voice: prefs.name, lang: prefs.lang, rate: prefs.rate, text };
     };
+    // A line that cannot be rendered would be a silent line in the video. Each reason is kept, and stops the recording.
+    const unrendered = new Set<string>();
     const prepare = async (request: ClipRequest) => {
-      const clip = await speech.render(request);
-      clips.set(clip.id, clip);
-      return clip;
+      try {
+        const clip = await speech.render(request);
+        clips.set(clip.id, clip);
+        return clip;
+      } catch (error) {
+        unrendered.add(error instanceof Error ? error.message : String(error));
+        throw error;
+      }
     };
     const prepareLine = (deviceId: string, sentence: string) => {
       const request = requestFor(deviceId, 'assistant', sentence);
@@ -227,8 +239,11 @@ export async function recordScenario(options: RecordOptions): Promise<RecordResu
     };
     const ahead: Array<Promise<unknown>> = [];
     // One short clip per voice first: it sets each voice's loudness, and the first use of a voice is the slow one.
+    // A person who says nothing in this scenario needs no voice.
+    const speaking = new Set(scenario.steps.filter((step) => step.kind === 'say' && step.device).map((step) => step.device!));
     for (const device of snapshot.devices) {
       for (const role of ['assistant', 'person'] as const) {
+        if (role === 'person' && !speaking.has(device.id)) continue;
         const request = requestFor(device.id, role, 'Ready.');
         if (request) ahead.push(speech.render(request));
       }
@@ -244,7 +259,7 @@ export async function recordScenario(options: RecordOptions): Promise<RecordResu
       }
     }
     await Promise.all(ahead);
-    log(`Voices are ready, and the people's lines are rendered.`);
+    log(`Voices are ready (${renderer.name}), and the people's lines are rendered.`);
 
     const puppeteer = await import('puppeteer-core');
     browser = await puppeteer.launch({
@@ -257,7 +272,7 @@ export async function recordScenario(options: RecordOptions): Promise<RecordResu
     await page.evaluateOnNewDocument(`if (window.top === window) window.__voicestageRecording = ${JSON.stringify(settings)};`);
     await page.exposeFunction('__voicestagePrepare', async (request: ClipRequest) => {
       const clip = await prepare(request);
-      return { id: clip.id, ms: clip.ms, voice: clip.voice };
+      return { id: clip.id, ms: clip.ms, voice: clip.voice, renderer: clip.renderer };
     });
     await page.exposeFunction('__voicestageMark', (mark: RecordingMark) => {
       marks.push(mark);
@@ -345,6 +360,9 @@ export async function recordScenario(options: RecordOptions): Promise<RecordResu
       for (const check of step.checks) if (!check.ok) log(`         ${check.label}: ${check.detail ?? 'not met'}`);
     }
     await sleep(tailMs);
+    if (unrendered.size > 0) {
+      throw new RecordError(`Nothing was written, because some lines could not be rendered and would have been silent:\n${[...unrendered].map((reason) => `  - ${reason}`).join('\n')}`);
+    }
 
     // --- finish the picture ---
     const end = Date.now();
@@ -364,14 +382,13 @@ export async function recordScenario(options: RecordOptions): Promise<RecordResu
     await mux({ video: pictureFile, audio: soundFile, out: videoFile });
 
     // --- the timeline ---
-    const voices = new Map([...clips.values()].map((clip) => [clip.id, clip.voice]));
-    const { items, steps } = buildTimeline({ origin, duration, devices, marks, stageEvents, presses, voices });
+    const { items, steps } = buildTimeline({ origin, duration, devices, marks, stageEvents, presses, clips });
     let report: VerifyReport | undefined;
     if (options.verify !== false) {
       const captions = new Map(devices.filter((device) => device.captions).map((device) => [device.id, device.captions as Rect]));
       report = await verifyRecording({ file: videoFile, items, captions, expected: { width, height, fps, duration }, window: Math.min(settings.gapMs, settings.beatMs) / 1000 });
     }
-    writeFileSync(timelineFile, `${JSON.stringify(timelineDocument({ name, scenario, state, settings, leadMs, tailMs, width, height, fps, frames, duration, devices, items, steps, report }), null, 2)}\n`);
+    writeFileSync(timelineFile, `${JSON.stringify(timelineDocument({ name, scenario, state, settings, leadMs, tailMs, width, height, fps, frames, duration, devices, items, steps, report, renderer, pronounce: config.recording.pronounce }), null, 2)}\n`);
     return { video: videoFile, timeline: timelineFile, duration, run: state, report };
   } finally {
     encoder?.kill();
@@ -403,6 +420,8 @@ function timelineDocument(input: {
   items: TimelineItem[];
   steps: ReturnType<typeof buildTimeline>['steps'];
   report?: VerifyReport;
+  renderer: VoiceRenderer;
+  pronounce: Record<string, string>;
 }): Record<string, unknown> {
   const { report } = input;
   return {
@@ -418,6 +437,12 @@ function timelineDocument(input: {
     },
     scenario: { name: input.scenario.name, file: input.scenario.file, mode: input.state.mode, status: input.state.status, steps: input.steps },
     settings: { beat: input.settings.beatMs / 1000, sentenceGap: input.settings.gapMs / 1000, lead: input.leadMs / 1000, tail: input.tailMs / 1000 },
+    // What rendered the voices. `pronounce` is the other spellings the voice was given; captions and `text` below keep what was written.
+    voices: {
+      renderer: input.renderer.name,
+      command: input.renderer instanceof CommandRenderer ? input.renderer.commandLine : undefined,
+      pronounce: Object.keys(input.pronounce).length > 0 ? input.pronounce : undefined,
+    },
     devices: input.devices.map((device) => ({
       id: device.id,
       name: device.name,

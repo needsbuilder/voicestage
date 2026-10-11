@@ -1,7 +1,11 @@
 /**
- * Voices for a recording: each sentence is rendered to an audio clip with the
- * macOS `say` command, with the same choice of voice the browser would make
- * (`src/shared/voices.ts`), and its real length is measured from the samples.
+ * Voices for a recording: each sentence is rendered to an audio clip outside
+ * the browser, and its real length is measured from the samples.
+ *
+ * Who renders is a `VoiceRenderer` (`renderers.ts`): the macOS `say` command,
+ * with the same choice of voice the browser would make (`src/shared/voices.ts`),
+ * or a program named in the configuration. Whatever it writes is treated the
+ * same way from there on.
  *
  * Clips are 48 kHz, 16-bit, mono. Silence at both ends is cut, so that a clip
  * starts when the voice does and lasts exactly as long as it is heard. All
@@ -10,12 +14,13 @@
  */
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
+import { respell, type PronounceRules } from '../shared/pronounce.js';
 import type { Clip, ClipRequest } from '../shared/recording.js';
-import { chooseVoice, voiceBaseName, type VoiceInfo } from '../shared/voices.js';
+import type { VoiceInfo } from '../shared/voices.js';
 
 const run = promisify(execFile);
 
@@ -135,78 +140,167 @@ export function mixTrack(clips: Array<{ at: number; data: Int16Array }>, seconds
 
 export interface RenderedClip extends Clip {
   data: Int16Array;
+  /** The sentence as written, which is what the caption shows. */
   text: string;
+  /** What the voice was given instead, when `recording.pronounce` changed it. */
+  spoken?: string;
+}
+
+/** A voice as a renderer knows it. */
+export interface RendererVoice {
+  /** The name the renderer is asked for. */
+  id: string;
+  lang?: string;
+  /** The name written into the timeline. */
+  label: string;
+}
+
+export interface RenderJob {
+  text: string;
+  voice: RendererVoice;
+  /** 1 is the voice's normal pace. */
+  rate: number;
+  /** Where the audio must be left: a WAV file. */
+  out: string;
+}
+
+/** Something that turns a sentence into a WAV file. */
+export interface VoiceRenderer {
+  /** "say", or the name the configuration gives its program. Written into the timeline. */
+  readonly name: string;
+  /** Tells this renderer's clips from every other renderer's in the cache on disk. */
+  readonly cacheKey: readonly string[];
+  /** How many sentences may be rendered at once. */
+  readonly parallel: number;
+  /** Fails with a plain reason when the renderer cannot work on this machine. */
+  check(): Promise<void>;
+  /** The voice a sentence is spoken with. */
+  voiceFor(request: Pick<ClipRequest, 'deviceId' | 'role' | 'slot' | 'slots' | 'voice' | 'lang'>): Promise<RendererVoice>;
+  /** Render one sentence to `job.out`. Any sample rate and channel count will do. */
+  render(job: RenderJob): Promise<void>;
 }
 
 const CALIBRATION = 'The quick brown fox jumps over the lazy dog, and then sits down for tea.';
 /** Every voice is brought to about this loudness (of 32767). */
 const TARGET_LOUDNESS = 5200;
-/** `say` speaks at about this many words a minute when not told otherwise. */
-const WORDS_PER_MINUTE = 175;
+/** Part of every cache key. Raise it when clips rendered by an older version must not be used again. */
+const CACHE_FORMAT = 'clips-2';
+
+export interface SpeechOptions {
+  renderer: VoiceRenderer;
+  /** Where rendered clips are kept between runs. */
+  cacheDir?: string;
+  /** Other spellings for the voice (`recording.pronounce`). */
+  pronounce?: PronounceRules;
+  ffmpeg?: string;
+}
 
 /**
- * Renders sentences with `say`, once each. Rendered clips are also kept on disk
- * between runs, so a second take of the same scenario starts with every line ready.
+ * Renders sentences, once each. Rendered clips are also kept on disk between
+ * runs, so a second take of the same scenario starts with every line ready.
  */
 export class Speech {
-  private voices: VoiceInfo[] | undefined;
+  readonly renderer: VoiceRenderer;
   private readonly clips = new Map<string, Promise<RenderedClip>>();
   private readonly gains = new Map<string, Promise<number>>();
+  private readonly rendering = new Map<string, Promise<Int16Array>>();
   private readonly cacheDir: string;
+  private readonly pronounce: PronounceRules | undefined;
+  private readonly ffmpeg: string;
+  private running = 0;
+  private readonly waiting: Array<() => void> = [];
 
-  constructor(options: { cacheDir?: string } = {}) {
+  constructor(options: SpeechOptions) {
+    this.renderer = options.renderer;
+    this.pronounce = options.pronounce;
+    this.ffmpeg = options.ffmpeg ?? 'ffmpeg';
     this.cacheDir = options.cacheDir ?? join(tmpdir(), 'voicestage-speech');
     mkdirSync(this.cacheDir, { recursive: true });
   }
 
-  /** The voices `say` has, in the shape the voice chooser works on. */
-  async voiceList(): Promise<VoiceInfo[]> {
-    if (!this.voices) {
-      const { stdout } = await run('say', ['-v', '?'], { maxBuffer: 4 * 1024 * 1024 }).catch((error: unknown) => {
-        throw new SpeechError(`Could not list the system voices with "say": ${error instanceof Error ? error.message : String(error)}`);
-      });
-      this.voices = parseSayVoices(stdout);
-      if (this.voices.length === 0) throw new SpeechError('The "say" command lists no voices.');
+  /** At most `renderer.parallel` renderings at a time; the rest wait their turn. */
+  private async turn<T>(work: () => Promise<T>): Promise<T> {
+    if (this.running >= this.renderer.parallel) await new Promise<void>((go) => this.waiting.push(go));
+    else this.running += 1;
+    try {
+      return await work();
+    } finally {
+      // The place passes straight to whoever has waited longest, if anyone has.
+      const next = this.waiting.shift();
+      if (next) next();
+      else this.running -= 1;
     }
-    return this.voices;
   }
 
-  /** The voice a sentence would be spoken with: the same rules as in the browser, applied to the system's voices. */
-  async voiceFor(request: Pick<ClipRequest, 'role' | 'slot' | 'slots' | 'voice' | 'lang'>): Promise<VoiceInfo> {
-    const voices = await this.voiceList();
-    const voice = chooseVoice(voices, { role: request.role, slot: request.slot, slots: request.slots, lang: request.lang, name: request.voice });
-    if (!voice) throw new SpeechError(`The system has no voice for ${request.lang ?? 'en-US'}. Add one in System Settings > Accessibility > Spoken Content.`);
-    return voice;
+  /**
+   * Bring what the renderer wrote to 48 kHz, mono, 16-bit, at `file`. A file
+   * that is already that is taken as it is; anything else goes through ffmpeg.
+   */
+  private async normalise(written: string, file: string, describe: string): Promise<void> {
+    let ready = false;
+    try {
+      const wav = readWav(readFileSync(written));
+      ready = wav.sampleRate === SAMPLE_RATE && wav.channels === 1;
+    } catch {
+      // Not 16-bit PCM, or not a WAV file at all: ffmpeg decides which.
+    }
+    if (ready) {
+      renameSync(written, file);
+      return;
+    }
+    const converted = `${written}.48k.wav`;
+    try {
+      await run(this.ffmpeg, ['-v', 'error', '-y', '-i', written, '-vn', '-ac', '1', '-ar', String(SAMPLE_RATE), '-c:a', 'pcm_s16le', '-f', 'wav', converted]);
+    } catch (error) {
+      rmSync(converted, { force: true });
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') throw new SpeechError(`${describe} is not 48 kHz mono 16-bit audio, and ffmpeg, which would convert it, was not found.`);
+      const detail = String((error as { stderr?: string }).stderr ?? (error instanceof Error ? error.message : error)).trim();
+      throw new SpeechError(`${describe} could not be read as audio: ${detail.split('\n').at(-1)}`);
+    } finally {
+      rmSync(written, { force: true });
+    }
+    renameSync(converted, file);
   }
 
-  private async say(voice: VoiceInfo, text: string, rate: number | undefined): Promise<Int16Array> {
-    const key = createHash('sha1').update(JSON.stringify([voice.name, voice.lang, rate ?? 1, text])).digest('hex');
-    const file = join(this.cacheDir, `${key}.wav`);
-    if (!existsSync(file)) {
-      const source = join(this.cacheDir, `${key}.txt`);
-      writeFileSync(source, text);
-      const args = ['-v', voice.name, '-f', source, '-o', file, '--file-format=WAVE', `--data-format=LEI16@${SAMPLE_RATE}`];
-      if (rate !== undefined && rate !== 1) args.push('-r', String(Math.round(WORDS_PER_MINUTE * rate)));
-      await run('say', args).catch((error: unknown) => {
-        throw new SpeechError(`"say" could not render a line with the voice ${voice.name}: ${error instanceof Error ? error.message : String(error)}`);
-      });
-      if (!existsSync(file)) throw new SpeechError(`"say" produced no audio for the voice ${voice.name}.`);
+  /** The samples of a sentence as the renderer made them, from the cache when it has been rendered before. */
+  private raw(voice: RendererVoice, text: string, rate: number): Promise<Int16Array> {
+    const key = createHash('sha1').update(JSON.stringify([CACHE_FORMAT, ...this.renderer.cacheKey, voice.id, voice.lang ?? '', rate, text])).digest('hex');
+    let pending = this.rendering.get(key);
+    if (!pending) {
+      pending = (async () => {
+        const file = join(this.cacheDir, `${key}.wav`);
+        if (!existsSync(file)) {
+          await this.turn(async () => {
+            // Written under another name first: a rendering that is interrupted must not leave half a clip in the cache.
+            const written = join(this.cacheDir, `${key}.${process.pid}.part.wav`);
+            const describe = `What "${this.renderer.name}" wrote for "${text}" with the voice ${voice.label}`;
+            rmSync(written, { force: true });
+            await this.renderer.render({ text, voice, rate, out: written });
+            if (!existsSync(written)) throw new SpeechError(`"${this.renderer.name}" finished without writing any audio for "${text}" with the voice ${voice.label}.`);
+            await this.normalise(written, file, describe);
+          });
+        }
+        const wav = readWav(readFileSync(file));
+        if (wav.sampleRate !== SAMPLE_RATE || wav.channels !== 1) throw new SpeechError(`Expected ${SAMPLE_RATE} Hz mono in ${file}, found ${wav.sampleRate} Hz with ${wav.channels} channel(s).`);
+        return wav.data;
+      })();
+      this.rendering.set(key, pending);
+      pending.catch(() => this.rendering.delete(key));
     }
-    const wav = readWav(readFileSync(file));
-    if (wav.sampleRate !== SAMPLE_RATE || wav.channels !== 1) throw new SpeechError(`Expected ${SAMPLE_RATE} Hz mono from "say", got ${wav.sampleRate} Hz with ${wav.channels} channel(s).`);
-    return wav.data;
+    return pending;
   }
 
   /** One gain per voice, measured on a fixed sentence, so every clip of a voice is treated alike. */
-  private gainFor(voice: VoiceInfo, rate: number | undefined): Promise<number> {
-    const key = `${voice.name}|${voice.lang}`;
+  private gainFor(voice: RendererVoice): Promise<number> {
+    const key = `${voice.id}|${voice.lang ?? ''}`;
     let gain = this.gains.get(key);
     if (!gain) {
-      gain = this.say(voice, CALIBRATION, rate).then((data) => {
+      gain = this.raw(voice, CALIBRATION, 1).then((data) => {
         const level = loudness(data);
         return level === 0 ? 1 : Math.max(0.4, Math.min(3, TARGET_LOUDNESS / level));
       });
       this.gains.set(key, gain);
+      gain.catch(() => this.gains.delete(key));
     }
     return gain;
   }
@@ -217,14 +311,15 @@ export class Speech {
     let clip = this.clips.get(key);
     if (!clip) {
       clip = (async () => {
-        const voice = await this.voiceFor(request);
-        const [raw, gain] = await Promise.all([this.say(voice, request.text, request.rate), this.gainFor(voice, undefined)]);
+        const voice = await this.renderer.voiceFor(request);
+        const spoken = respell(request.text, this.pronounce);
+        const [raw, gain] = await Promise.all([this.raw(voice, spoken, request.rate ?? 1), this.gainFor(voice)]);
         const trimmed = trimSilence(raw);
-        if (trimmed.length === 0) throw new SpeechError(`The voice ${voice.name} rendered "${request.text}" as silence.`);
+        if (trimmed.length === 0) throw new SpeechError(`"${this.renderer.name}" rendered "${spoken}" with the voice ${voice.label} as silence.`);
         const peak = trimmed.reduce((max, sample) => Math.max(max, Math.abs(sample)), 0);
         const data = applyGain(trimmed, Math.min(gain, 31_000 / Math.max(1, peak)));
         const id = createHash('sha1').update(key).digest('hex').slice(0, 12);
-        return { id, ms: Math.round((data.length / SAMPLE_RATE) * 1000), voice: voiceBaseName(voice.name), data, text: request.text };
+        return { id, ms: Math.round((data.length / SAMPLE_RATE) * 1000), voice: voice.label, renderer: this.renderer.name, data, text: request.text, spoken: spoken === request.text ? undefined : spoken };
       })();
       this.clips.set(key, clip);
       // A failure is reported to whoever asked; do not let it also surface as an unhandled rejection.

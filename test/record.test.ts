@@ -213,9 +213,9 @@ describe('the timeline that goes with a video', () => {
       { at: origin + 9500, event: { type: 'device', deviceId: 'kitchen', patch: { notification: { id: 'n1', text: 'Sarah has answered.', at: '', state: 'done' } } } },
     ],
     presses: [{ deviceId: 'phone', label: 'Approve', start: origin + 6000, at: origin + 6900, end: origin + 7500, x: 1520.4, y: 457.2 }],
-    voices: new Map([
-      ['clip-1-0', 'Moira'],
-      ['clip-2-0', 'Samantha'],
+    clips: new Map([
+      ['clip-1-0', { voice: 'Moira', renderer: 'say' }],
+      ['clip-2-0', { voice: 'Samantha', renderer: 'say' }],
     ]),
   };
 
@@ -231,7 +231,7 @@ describe('the timeline that goes with a video', () => {
       '9 20 card Kitchen display: Shows the result of pay',
     ]);
     const [margaret] = items;
-    expect(margaret).toMatchObject({ kind: 'utterance', role: 'person', voice: 'Moira' });
+    expect(margaret).toMatchObject({ kind: 'utterance', role: 'person', voice: 'Moira', renderer: 'say' });
     // A person's whole line is on the screen from its first sentence; a device's caption changes with each one.
     expect(margaret!.kind === 'utterance' && margaret!.sentences).toEqual([
       { start: 1, end: 3, text: 'Pay my bill.', caption: true, clip: 'clip-1-0' },
