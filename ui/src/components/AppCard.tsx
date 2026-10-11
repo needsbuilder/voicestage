@@ -2,12 +2,18 @@
  * Renders an MCP Apps card (`ui://...`, `text/html;profile=mcp-app`) on a
  * device screen, with the official host bridge.
  *
- * The card's HTML goes into a sandboxed iframe (`sandbox="allow-scripts
- * allow-forms"`, so it has an opaque origin and cannot reach this page, its
- * storage or its cookies) behind a Content-Security-Policy built from what the
- * resource declares (nothing from the network unless it asks for it).
+ * As the MCP Apps specification requires of a host that is a web page, the
+ * card is not loaded by this page. The iframe here loads the sandbox proxy, a
+ * small page served from a second origin (another localhost port; see
+ * `src/server/sandbox.ts`). The proxy says it is ready, is sent the card's
+ * HTML, loads it in an iframe of its own, and passes messages both ways. The
+ * card so has a real origin, which is not this page's: storage works in it,
+ * and this page, its storage and its API are out of its reach. Its
+ * Content-Security-Policy is built from what the resource declares (nothing
+ * from the network unless it asks for it).
+ *
  * `AppBridge` from `@modelcontextprotocol/ext-apps/app-bridge` speaks the MCP
- * Apps protocol with it over `postMessage`:
+ * Apps protocol with the card over `postMessage`:
  *
  *   card -> host   ui/initialize, tools/call, resources/read, ui/open-link,
  *                  ui/message, notifications/message, size changes
@@ -16,6 +22,9 @@
  * Tool calls and resource reads from the card are sent to the stage server,
  * which makes them on the device's own MCP connection to the server the card
  * came from. They show up in the inspector with origin "card".
+ *
+ * A stage started without the proxy (some tests are) falls back to one
+ * sandboxed iframe with an opaque origin, in which a card has no storage.
  */
 import { AppBridge, PostMessageTransport, type McpUiHostContext } from '@modelcontextprotocol/ext-apps/app-bridge';
 import { useEffect, useRef, useState } from 'react';
@@ -23,7 +32,7 @@ import { withCsp } from '../../../src/shared/card-html';
 import { PRODUCT_NAME, PRODUCT_VERSION, type CardResource, type DeviceKind, type ScreenContent } from '../../../src/shared/types';
 import { api } from '../api';
 import { recording } from '../recording';
-import { askToOpenLink, say, showToast } from '../store';
+import { askToOpenLink, say, showToast, useStage } from '../store';
 
 function textOfBlocks(blocks: Array<{ type: string; text?: string }> | undefined): string {
   return (blocks ?? [])
@@ -31,6 +40,21 @@ function textOfBlocks(blocks: Array<{ type: string; text?: string }> | undefined
     .filter(Boolean)
     .join(' ')
     .trim();
+}
+
+/** What the card's own iframe may do, inside the proxy: run scripts, keep its origin (for storage), submit forms. */
+const VIEW_SANDBOX = 'allow-scripts allow-same-origin allow-forms';
+
+/**
+ * Where the sandbox proxy is. It must be another origin than this page; the
+ * other name for this machine also makes it another site, so the browser gives
+ * the card a process of its own.
+ */
+function sandboxUrl(port: number, csp: CardResource['csp']): string {
+  const hostname = location.hostname === 'localhost' ? '127.0.0.1' : 'localhost';
+  const query = new URLSearchParams({ host: location.origin });
+  if (csp) query.set('csp', JSON.stringify(csp));
+  return `http://${hostname}:${port}/sandbox?${query.toString()}`;
 }
 
 interface Props {
@@ -42,6 +66,7 @@ interface Props {
 export function AppCard({ deviceId, kind, screen }: Props) {
   const frame = useRef<HTMLIFrameElement>(null);
   const [state, setState] = useState<'loading' | 'ready' | 'failed'>('loading');
+  const sandboxPort = useStage((stage) => stage.stage?.sandboxPort);
 
   useEffect(() => {
     const iframe = frame.current;
@@ -94,6 +119,11 @@ export function AppCard({ deviceId, kind, screen }: Props) {
     };
     bridge.onrequestdisplaymode = async () => ({ mode: 'inline' });
     bridge.onloggingmessage = (params) => void api.cardEvent(deviceId, 'log', params, card.uri);
+    // The proxy has loaded and listens: hand it the card.
+    bridge.onsandboxready = () => {
+      if (disposed) return;
+      void bridge.sendSandboxResourceReady({ html: withCsp(card.html, card.csp), sandbox: VIEW_SANDBOX, csp: card.csp, permissions: card.permissions as never });
+    };
     bridge.oninitialized = () => {
       if (disposed) return;
       setState('ready');
@@ -107,11 +137,13 @@ export function AppCard({ deviceId, kind, screen }: Props) {
       setState((current) => (current === 'loading' ? 'failed' : current));
     }, 6000);
 
-    // Listen first, then load the card, so its first message (ui/initialize) is not missed.
+    // Listen first, then load, so the first message (the proxy's "ready", or the card's ui/initialize) is not missed.
     bridge
       .connect(new PostMessageTransport(target, target))
       .then(() => {
-        if (!disposed) iframe.srcdoc = withCsp(card.html, card.csp);
+        if (disposed) return;
+        if (sandboxPort !== undefined) iframe.src = sandboxUrl(sandboxPort, card.csp);
+        else iframe.srcdoc = withCsp(card.html, card.csp);
       })
       .catch((error: unknown) => {
         setState('failed');
@@ -128,11 +160,12 @@ export function AppCard({ deviceId, kind, screen }: Props) {
         .finally(() => void bridge.close().catch(() => undefined));
     };
     // A new tool result is a new card instance.
-  }, [screen.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [screen.id, sandboxPort]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div className={`app-card app-card--${state}`}>
-      <iframe ref={frame} title={`${screen.tool.title ?? screen.tool.name} card`} sandbox="allow-scripts allow-forms" referrerPolicy="no-referrer" />
+      {/* With the proxy, the outer frame keeps the proxy's own origin (the specification's allow-same-origin); without it, the card gets none. */}
+      <iframe ref={frame} title={`${screen.tool.title ?? screen.tool.name} card`} sandbox={sandboxPort !== undefined ? VIEW_SANDBOX : 'allow-scripts allow-forms'} referrerPolicy="no-referrer" />
       {state === 'failed' && (
         <p className="app-card__note" role="status">
           This card did not answer the MCP Apps handshake. Its tool result is in the inspector.

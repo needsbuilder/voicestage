@@ -28,7 +28,8 @@ export function cardCsp(csp: CardResource['csp']): string {
     `media-src data: blob: ${resources}`.trim(),
     `connect-src ${connect || "'none'"}`,
     `frame-src ${frames || "'none'"}`,
-    `base-uri ${base || "'none'"}`,
+    `base-uri ${base || "'self'"}`,
+    "object-src 'none'",
     "form-action 'none'",
   ].join('; ');
 }

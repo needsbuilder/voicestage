@@ -128,11 +128,15 @@ export class Stage implements DeviceHost {
 
   private speakers = 0;
 
+  /** Set by whoever serves the stage over HTTP, once the card sandbox is listening. */
+  sandboxPort: number | undefined;
+
   snapshot(): StageSnapshot {
     return {
       name: this.config.name,
       version: PRODUCT_VERSION,
       configPath: this.config.path,
+      sandboxPort: this.sandboxPort,
       devices: [...this.devices.values()].map((device) => device.snapshot()),
       scenarios: this.scenarios.map(summarizeScenario),
       run: this.run ? structuredClone(this.run.state) : this.lastRun,

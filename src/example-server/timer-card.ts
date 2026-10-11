@@ -6,6 +6,12 @@
  * `ui/initialize` handshake, `ui/notifications/tool-result` from the host, and
  * `tools/call` back through the host for its "Start again" button. No network
  * access, no dependencies.
+ *
+ * It also counts the timers it has shown, in `localStorage`. That only works
+ * in a host that gives a card an origin of its own, as the MCP Apps
+ * specification asks (a sandbox proxy on another origin). In a host that puts
+ * the card in a sandboxed iframe with no origin, storage throws, and the card
+ * simply leaves the line out.
  */
 export const TIMER_CARD_URI = 'ui://example/timer-card.html';
 
@@ -30,6 +36,7 @@ circle { fill: none; stroke-width: 9; }
 .eyebrow { margin: 0; font-size: 0.85rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
 h1 { margin: 0.1rem 0 0.3rem; font-size: 1.9rem; line-height: 1.15; }
 p { margin: 0 0 0.9rem; color: var(--muted); }
+.count { margin: 0.9rem 0 0; font-size: 0.85rem; }
 button { font: inherit; font-weight: 700; min-height: 3rem; padding: 0.6rem 1.3rem; border-radius: 0.7rem; border: 2px solid var(--ink); background: transparent; color: var(--ink); cursor: pointer; }
 button:disabled { opacity: 0.5; cursor: default; }
 button:focus-visible { outline: 4px solid #2563eb; outline-offset: 3px; }
@@ -47,6 +54,7 @@ button:focus-visible { outline: 4px solid #2563eb; outline-offset: 3px; }
     <h1 id="label">One moment...</h1>
     <p id="status" role="status"></p>
     <button type="button" id="again" hidden>Start again</button>
+    <p class="count" id="count" hidden></p>
   </div>
 </main>
 <script>
@@ -83,6 +91,21 @@ button:focus-visible { outline: 4px solid #2563eb; outline-offset: 3px; }
     document.getElementById('again').hidden = !done;
     if (done && tick) { clearInterval(tick); tick = null; }
   }
+  // How many timers this card has shown in this browser. Null where the host gives the card no storage.
+  function remember(id) {
+    try {
+      var store = window.localStorage;
+      var count = Number(store.getItem('kitchen-helper.timers') || 0);
+      if (store.getItem('kitchen-helper.last') !== id) {
+        count += 1;
+        store.setItem('kitchen-helper.timers', String(count));
+        store.setItem('kitchen-helper.last', id);
+      }
+      return count;
+    } catch (error) {
+      return null;
+    }
+  }
   function show(result) {
     var data = result && result.structuredContent;
     if (!data || result.isError || !data.ends_at) {
@@ -93,6 +116,9 @@ button:focus-visible { outline: 4px solid #2563eb; outline-offset: 3px; }
     }
     timer = data;
     document.getElementById('label').textContent = data.label;
+    var count = remember(data.timer_id);
+    document.getElementById('count').hidden = count === null;
+    if (count !== null) document.getElementById('count').textContent = count === 1 ? 'The first timer started from this browser.' : 'Timer ' + count + ' started from this browser.';
     if (tick) clearInterval(tick);
     tick = setInterval(draw, 250);
     draw();

@@ -20,10 +20,11 @@ import type { CDPSession, Frame, Page } from 'puppeteer-core';
 import type { StageConfig } from '../core/config.js';
 import type { Scenario } from '../core/scenario/schema.js';
 import { Stage } from '../core/stage.js';
-import { createStageApp, listen } from '../server/app.js';
+import { serveStage } from '../server/app.js';
 import type { ClipRequest, RecordingMark, RecordingSettings } from '../shared/recording.js';
 import { splitSentences } from '../shared/sentences.js';
 import { PRODUCT_NAME, PRODUCT_VERSION, type ScenarioRunState, type StageEvent } from '../shared/types.js';
+import { findChrome } from './chrome.js';
 import { DEVICE_GEOMETRY, findButtonCall, pointerCall, POINTER_SCRIPT } from './in-page.js';
 import { mixTrack, SAMPLE_RATE, Speech, writeWav, type RenderedClip } from './speech.js';
 import { buildTimeline, type Press, type Rect, type TimelineDevice, type TimelineItem } from './timeline.js';
@@ -75,8 +76,6 @@ export interface RecordResult {
   report?: VerifyReport;
 }
 
-const CHROME_PATHS = ['/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', '/Applications/Chromium.app/Contents/MacOS/Chromium', '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge'];
-
 /** What a recording needs from the machine, checked before anything is started, with a plain reason when it is missing. */
 export async function checkRecordingSupport(options: { chromePath?: string; env?: NodeJS.ProcessEnv } = {}): Promise<{ chrome: string }> {
   if (process.platform !== 'darwin') {
@@ -91,8 +90,7 @@ export async function checkRecordingSupport(options: { chromePath?: string; env?
   }
   const { stdout } = await run('ffmpeg', ['-hide_banner', '-encoders']);
   if (!/\blibx264\b/.test(stdout)) throw new RecordError('This ffmpeg has no libx264 encoder, which recording uses for H.264. Install a full FFmpeg build.');
-  const env = options.env ?? process.env;
-  const chrome = [options.chromePath, env.CHROME_PATH, ...CHROME_PATHS].find((path): path is string => Boolean(path) && existsSync(path!));
+  const chrome = findChrome(options.chromePath, options.env ?? process.env);
   if (!chrome) throw new RecordError('Recording needs Google Chrome (or Chromium, or Edge). None was found; pass --chrome <path> or set CHROME_PATH.');
   return { chrome };
 }
@@ -185,8 +183,7 @@ export async function recordScenario(options: RecordOptions): Promise<RecordResu
 
   // A recording never hurries a line along: the page reports when each one is over.
   const stage = new Stage(config, { provider: 'scripted', patience: 12, env: options.env, log });
-  const app = createStageApp({ stage, uiDir: options.uiDir, log });
-  const running = await listen(app, { port: 0 });
+  const running = await serveStage({ stage, uiDir: options.uiDir, log, port: 0 });
   const stageEvents: Array<{ at: number; event: StageEvent }> = [];
   const marks: RecordingMark[] = [];
   const presses: Press[] = [];

@@ -2,9 +2,10 @@
  * The HTTP side of a stage: a small JSON API, one server-sent events stream
  * that carries everything a UI needs, and the UI itself.
  *
- * It only ever listens on localhost. Requests are checked for a local `Host`
- * (and `Origin`, when a browser sends one), because the API can make tool
- * calls with the tokens in your configuration.
+ * It only ever listens on localhost. Requests are checked for a local `Host`,
+ * and the API only answers the stage's own page: it can make tool calls with
+ * the tokens in your configuration, so no other page in the browser may use
+ * it. That includes the cards, which run on the sandbox's origin (`sandbox.ts`).
  */
 import { existsSync } from 'node:fs';
 import type { Server as HttpServer } from 'node:http';
@@ -14,6 +15,7 @@ import express, { type Express, type NextFunction, type Request, type Response }
 import type { JsonObject, StageEvent, ToolOrigin, UtteranceSource } from '../shared/types.js';
 import { errorMessage } from '../core/mcp.js';
 import type { Stage } from '../core/stage.js';
+import { startSandbox } from './sandbox.js';
 
 const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]', '::1']);
 
@@ -22,6 +24,16 @@ function isLocal(value: string | undefined, isOrigin: boolean): boolean {
   try {
     const hostname = isOrigin ? new URL(value).hostname : new URL(`http://${value}`).hostname;
     return LOCAL_HOSTS.has(hostname) || LOCAL_HOSTS.has(`[${hostname}]`);
+  } catch {
+    return false;
+  }
+}
+
+/** True when a request's `Origin` (absent for programs and same-origin page loads) is the address it was sent to. */
+function sameOrigin(origin: string | undefined, host: string | undefined): boolean {
+  if (origin === undefined) return true;
+  try {
+    return new URL(origin).host === host;
   } catch {
     return false;
   }
@@ -45,6 +57,16 @@ export function createStageApp(options: StageAppOptions): Express {
   app.use((req, res, next) => {
     if (!isLocal(req.headers.host, false) || (req.headers.origin !== undefined && !isLocal(req.headers.origin, true))) {
       res.status(403).json({ error: 'Voicestage only answers requests from this machine.' });
+      return;
+    }
+    next();
+  });
+  // The API is for the stage's own page. A browser says where a request comes from: any other page,
+  // on this machine or not, is refused. Programs that are not browsers send neither header.
+  app.use('/api', (req, res, next) => {
+    const site = req.headers['sec-fetch-site'];
+    if (!sameOrigin(req.headers.origin, req.headers.host) || (typeof site === 'string' && site !== 'same-origin' && site !== 'none')) {
+      res.status(403).json({ error: 'The Voicestage API only answers the stage page itself.' });
       return;
     }
     next();
@@ -270,3 +292,32 @@ export async function listen(app: Express, options: { port?: number; strictPort?
     },
   };
 }
+
+export interface StageServer extends RunningStage {
+  /** Port of the sandbox proxy for cards: a second origin on this machine. */
+  sandboxPort: number;
+}
+
+/**
+ * Serve a stage: its page and API on one port, and the sandbox proxy for cards
+ * on another, which the stage then tells its page about.
+ */
+export async function serveStage(options: StageAppOptions & { port?: number; strictPort?: boolean }): Promise<StageServer> {
+  const running = await listen(createStageApp(options), { port: options.port, strictPort: options.strictPort });
+  try {
+    const sandbox = await startSandbox({ port: running.port + 1, log: options.log });
+    options.stage.sandboxPort = sandbox.port;
+    return {
+      ...running,
+      sandboxPort: sandbox.port,
+      async close() {
+        options.stage.sandboxPort = undefined;
+        await Promise.all([running.close(), sandbox.close()]);
+      },
+    };
+  } catch (error) {
+    await running.close().catch(() => undefined);
+    throw error;
+  }
+}
+

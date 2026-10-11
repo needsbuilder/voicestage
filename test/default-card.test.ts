@@ -106,7 +106,7 @@ describe('default card', () => {
 
 describe('card sandbox policy', () => {
   it('denies everything a card did not ask for', () => {
-    expect(cardCsp(undefined)).toBe("default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; media-src data: blob:; connect-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'");
+    expect(cardCsp(undefined)).toBe("default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; media-src data: blob:; connect-src 'none'; frame-src 'none'; base-uri 'self'; object-src 'none'; form-action 'none'");
   });
 
   it('allows the origins a card declares, and drops anything that is not an origin', () => {

@@ -341,6 +341,12 @@ export interface StageSnapshot {
   name: string;
   version: string;
   configPath?: string;
+  /**
+   * The localhost port of the sandbox proxy that MCP Apps cards are loaded
+   * through (a second origin, as the MCP Apps specification requires of a web
+   * host). Absent when the stage was started without one.
+   */
+  sandboxPort?: number;
   devices: DeviceSnapshot[];
   scenarios: ScenarioSummary[];
   run: ScenarioRunState | null;

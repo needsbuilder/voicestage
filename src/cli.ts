@@ -16,7 +16,7 @@ import { ConfigError, findConfigFile, loadConfigFile, quickConfig, type Provider
 import { formatReport, formatTimeline } from './core/scenario/runner.js';
 import { loadScenarioFile, ScenarioError, type Scenario } from './core/scenario/schema.js';
 import { Stage } from './core/stage.js';
-import { createStageApp, listen } from './server/app.js';
+import { serveStage, type StageAppOptions } from './server/app.js';
 import { PRODUCT_NAME, PRODUCT_VERSION } from './shared/types.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -156,7 +156,7 @@ async function serve(command: 'dev' | 'start', flags: Flags): Promise<void> {
     log: (line) => console.log(`[stage] ${line}`),
   });
 
-  let devMiddleware: Parameters<typeof createStageApp>[0]['devMiddleware'];
+  let devMiddleware: StageAppOptions['devMiddleware'];
   let closeVite: (() => Promise<void>) | undefined;
   if (command === 'dev') {
     const { createServer } = await import('vite');
@@ -167,13 +167,13 @@ async function serve(command: 'dev' | 'start', flags: Flags): Promise<void> {
     throw new ConfigError('The UI has not been built yet. Run "npm run build" first, or use "npm run dev".');
   }
 
-  const app = createStageApp({ stage, uiDir: join(packageRoot, 'dist', 'ui'), devMiddleware, log: (line) => console.log(`[stage] ${line}`) });
   const port = flags.port !== undefined ? Number(flags.port) : (config.port ?? 4700);
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new ConfigError(`--port must be a number between 0 and 65535, got "${flags.port}".`);
-  const running = await listen(app, { port, strictPort: flags.port !== undefined });
+  const running = await serveStage({ stage, uiDir: join(packageRoot, 'dist', 'ui'), devMiddleware, log: (line) => console.log(`[stage] ${line}`), port, strictPort: flags.port !== undefined });
 
   console.log(`\n  ${PRODUCT_NAME} is on stage at ${running.url}\n`);
   console.log(`  Configuration: ${config.path ?? (flags.mcp ? `--mcp ${flags.mcp}` : 'built-in example')}`);
+  console.log(`  Cards are loaded through the sandbox proxy on port ${running.sandboxPort} (a second origin).`);
   await stage.start();
   for (const device of stage.devices.values()) {
     const snapshot = device.snapshot();

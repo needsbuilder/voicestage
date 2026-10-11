@@ -163,6 +163,13 @@ describe('stage server', () => {
     // A page on another site cannot reach the API, whether by a rebinding host name or by a cross-origin request.
     expect(await status({ Host: 'attacker.example' })).toBe(403);
     expect(await status({ Origin: 'https://attacker.example' })).toBe(403);
-    expect(await status({ Origin: 'http://localhost:5173' })).toBe(200);
+    // Nor can another page on this machine. Cards run on such an origin (the sandbox proxy's), and must not have the API.
+    expect(await status({ Origin: 'http://localhost:5173' })).toBe(403);
+    expect(await status({ Origin: `http://127.0.0.1:${running.port + 1}` })).toBe(403);
+    expect(await status({ 'Sec-Fetch-Site': 'same-site' })).toBe(403);
+    expect(await status({ 'Sec-Fetch-Site': 'cross-site' })).toBe(403);
+    // The stage's own page can.
+    expect(await status({ Origin: `http://localhost:${running.port}`, 'Sec-Fetch-Site': 'same-origin' })).toBe(200);
+    expect(await status({ Origin: `http://127.0.0.1:${running.port}`, Host: `127.0.0.1:${running.port}` })).toBe(200);
   });
 });
