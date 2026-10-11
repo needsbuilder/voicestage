@@ -313,6 +313,7 @@ export class Speech {
       clip = (async () => {
         const voice = await this.renderer.voiceFor(request);
         const spoken = respell(request.text, this.pronounce);
+        if (!spoken.trim()) throw new SpeechError(`The other spellings (recording.pronounce) leave nothing of "${request.text}" for the voice to say.`);
         const [raw, gain] = await Promise.all([this.raw(voice, spoken, request.rate ?? 1), this.gainFor(voice)]);
         const trimmed = trimSilence(raw);
         if (trimmed.length === 0) throw new SpeechError(`"${this.renderer.name}" rendered "${spoken}" with the voice ${voice.label} as silence.`);

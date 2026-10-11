@@ -397,6 +397,12 @@ describe('a voice program that lets the recorder down', () => {
     expect(readdirSync(cacheDir).filter((name) => /^[0-9a-f]{40}\.wav$/.test(name))).toEqual([]);
   });
 
+  it('is never asked to say nothing: other spellings that remove a whole sentence are reported', async () => {
+    const speech = new Speech({ renderer: fake(), cacheDir: fresh(), pronounce: compilePronunciations({ '/^Sarah has answered\\.$/': '' }) });
+    expect((await rejection(speech, request('Sarah has answered.'))).message).toMatch(/recording\.pronounce\) leave nothing of "Sarah has answered\." for the voice to say/);
+    expect(calls()).toEqual([]);
+  });
+
   it('is asked for a speaker who has no voice name', async () => {
     const speech = new Speech({ renderer: fake(), cacheDir: fresh() });
     expect((await rejection(speech, request('Hello.', '', { voice: undefined }))).message).toMatch(/No voice is set for the device "kitchen".*set voice\.name/);
