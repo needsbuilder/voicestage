@@ -35,7 +35,7 @@ All error text is copied from a terminal or from Chrome. Reproductions were run 
 | ID | Kind | Area | Severity | What happened |
 | --- | --- | --- | --- | --- |
 | V-01 | Hit | MCP TypeScript SDK (client) | Major | After a server restart the client keeps its dead session, and the errors do not say so |
-| V-02 | Gap | MCP Apps | Major | The specification requires a sandbox proxy on a second origin; the npm package has none, and we shipped without one |
+| V-02 | Gap | MCP Apps | Major | The specification requires a sandbox proxy on a second origin; the npm package has none. We first shipped without one, then wrote it |
 | V-03 | Designed around | MCP specification | Major | No standard way to tell the person something when no request is in flight |
 | V-04 | Hit | Chrome, speech recognition | Major | Chrome's fake-microphone flags do not reach speech recognition |
 | V-05 | Hit | Chrome, speech synthesis | Major | Speech is refused until the page is clicked, with no exception; the default voice is in the system's language |
@@ -96,13 +96,13 @@ One more thing, which is Node's `fetch` and not the SDK: straight after a restar
 
 ---
 
-## V-02. MCP Apps: the specification requires a sandbox proxy, the package has none, and we shipped without one
+## V-02. MCP Apps: the specification requires a sandbox proxy, and the package has none
 
-**Severity:** Major. Voicestage's host does not conform to a MUST, and a card can behave differently in it than in a conforming host.
+**Severity:** Major. For a while Voicestage's host did not conform to a MUST, and a card could behave differently in it than in a conforming host. It conforms now, with a proxy we wrote.
 
 **Task attempted.** Render `ui://` cards (`text/html;profile=mcp-app`) on a simulated device screen, in a web page, with the official host bridge.
 
-**How we met it.** Gap. We built the host from the installed package: its type definitions and README. We read the specification's sandbox section only while checking this log, after the host was finished.
+**How we met it.** Gap. We built the host from the installed package: its type definitions and README. We read the specification's sandbox section only while checking the first version of this log, after the host was finished.
 
 **Steps taken.**
 1. `npm install @modelcontextprotocol/ext-apps`, then `AppBridge` and `PostMessageTransport` from `@modelcontextprotocol/ext-apps/app-bridge`.
@@ -119,23 +119,24 @@ The specification (2026-01-26, "Sandbox proxy") says:
 > 1. The Host and the Sandbox MUST have different origins.
 > 2. The Sandbox MUST have the following permissions: `allow-scripts`, `allow-same-origin`.
 
-**What we shipped instead.** One `<iframe sandbox="allow-scripts allow-forms">` with the card as `srcdoc`, a Content-Security-Policy injected as a `<meta>` tag built from the resource's `_meta.ui.csp`, and `new AppBridge(null, ...)` whose `oncalltool` and `onreadresource` forward to our server, which makes the call on the device's own MCP connection.
+**What we shipped first.** One `<iframe sandbox="allow-scripts allow-forms">` with the card as `srcdoc` and a Content-Security-Policy injected as a `<meta>` tag. Checked in Chrome 154, it did the handshake, tool input and result, and a card's `tools/call` through the host. But the card had the origin `null`, so
 
-What that does and does not do, checked in Chrome 154:
+```
+SecurityError: Failed to read the 'localStorage' property from 'Window': The document is sandboxed and lacks the 'allow-same-origin' flag.
+```
 
-- Works: the `ui/initialize` handshake, tool input and tool result to the card, and a card's `tools/call` through the host. A real pointer click on the example card's button produced a tool call recorded with origin `card`.
-- Holds: inside a card `window.origin` is `null`, the page around it cannot be reached (`SecurityError`), and an undeclared `fetch` is blocked.
-- Differs from a conforming host: the card has an opaque origin, so
+and `document.cookie` threw the same way. A card that uses storage worked in a conforming host and failed in ours.
 
-  ```
-  SecurityError: Failed to read the 'localStorage' property from 'Window': The document is sandboxed and lacks the 'allow-same-origin' flag.
-  ```
+**Workaround: we wrote the proxy.** `src/server/sandbox.ts` (178 lines) is a second listener on another localhost port that serves one page. The card's iframe loads that page; it posts `ui/notifications/sandbox-proxy-ready`, receives the card's HTML in `ui/notifications/sandbox-resource-ready` (sent with `AppBridge.sendSandboxResourceReady`, which worked as its types say), loads it in an inner iframe and relays everything else. `AppBridge` and `PostMessageTransport` needed no change on the host side: about twenty changed lines in our card component. What we had to work out ourselves, each of which a shipped proxy would have settled:
 
-  and `document.cookie` throws the same way. A card that uses storage works in a conforming host and fails in ours.
+- **Where the policy goes.** We serve the proxy page with a `Content-Security-Policy` header built from the resource's `_meta.ui.csp`, passed in the page's URL, and rely on the card's `srcdoc` document inheriting it. In Chrome 154 a policy with `frame-src 'none'` on the proxy page did not stop the proxy from creating the `srcdoc` iframe, and an undeclared `fetch` from the card was refused.
+- **Which origin.** Another port on the same host name is another origin but the same site. We use the other name for the machine (`127.0.0.1` when the stage is on `localhost`, and the reverse), so that it is another site too.
+- **Our own API.** It accepted requests from any origin on this machine. Once cards run on an origin on this machine, that would have let a card that declares the stage in `connectDomains` call the API, which makes tool calls with the user's tokens. The API now answers only the stage's own page. A host author who adds the proxy without thinking of this opens that door.
+- **Storage is shared.** Every card, from every server and on every simulated device, has the proxy's one origin, so they share `localStorage`.
 
-**Workaround.** None yet. The README says so under "Where this departs from the specification" and under Limitations.
+Checked in Chrome 154 by `test/cards.browser.test.ts`, with the example card loaded both ways. Through the proxy: the card's origin is the proxy's, `localStorage` works, `window.top.document` and `window.top.localStorage` throw `SecurityError`, `fetch` to the stage's API and to an undeclared site fail with `TypeError`, and a real pointer click on the card's button makes the card call its tool through the host. Without it: origin `null`, storage throws.
 
-**Suggestion.** Ship the sandbox proxy page in the npm package, with a few lines of Node to serve it on a second localhost port, so that a conforming host is ten lines and not a design task. And say in the specification whether a `srcdoc` iframe without `allow-same-origin` is acceptable for a local development host: it is the shortcut every small host will find first.
+**Suggestion.** Ship the sandbox proxy page in the npm package, with a few lines of Node to serve it on a second localhost port, so that a conforming host is ten lines and not a design task with security consequences. Say in the specification where the card's policy is meant to be applied (a header on the proxy, a `<meta>` in the card, or both), and whether a host on localhost should give each server an origin of its own.
 
 ---
 

@@ -7,8 +7,12 @@
  *   - for every sentence whose caption changes on a device, the frame in which
  *     the caption changes and the sample at which the voice starts are found in
  *     the decoded video and audio, and compared.
+ *
+ * `checkRecording` does the same for a recording made earlier, from its timeline file.
  */
 import { spawn } from 'node:child_process';
+import { readFileSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { SAMPLE_RATE } from './speech.js';
 import { overlappingSentences, type Rect, type TimelineItem } from './timeline.js';
 
@@ -95,14 +99,24 @@ export function audioOnset(track: Int16Array, from: number, until: number, thres
   return undefined;
 }
 
-/** The first frame between `from` and `until` (seconds) in which the region changes noticeably, as a time in seconds. */
-export function firstChange(activity: Float32Array, fps: number, from: number, until: number, threshold = 0.35): number | undefined {
+/**
+ * The frame between `from` and `until` (seconds) in which the region changes
+ * most, as a time in seconds. New words replacing old ones are one large
+ * change in one frame; the caption before them dimming is many small ones,
+ * and must not be mistaken for it.
+ */
+export function strongestChange(activity: Float32Array, fps: number, from: number, until: number, threshold = 0.35): number | undefined {
   const start = Math.max(1, Math.ceil(from * fps));
   const end = Math.min(activity.length - 1, Math.floor(until * fps));
+  let best: number | undefined;
+  let most = threshold;
   for (let frame = start; frame <= end; frame += 1) {
-    if (activity[frame]! > threshold) return frame / fps;
+    if (activity[frame]! > most) {
+      most = activity[frame]!;
+      best = frame;
+    }
   }
-  return undefined;
+  return best === undefined ? undefined : best / fps;
 }
 
 export interface SyncSample {
@@ -173,7 +187,7 @@ export async function verifyRecording(options: VerifyOptions): Promise<VerifyRep
         const sample: SyncSample = { text: sentence.text, device: item.device, start: sentence.start };
         sample.audio = audioOnset(track, sentence.start - window, sentence.start + 0.4);
         const region = activity.get(item.device);
-        if (sentence.caption && region) sample.caption = firstChange(region, expected.fps, sentence.start - window, sentence.start + window);
+        if (sentence.caption && region) sample.caption = strongestChange(region, expected.fps, sentence.start - window, sentence.start + window);
         if (sample.audio === undefined) problems.push(`No voice is heard where "${sentence.text}" should start (${sentence.start} s).`);
         if (sentence.caption && region && sample.caption === undefined) problems.push(`The caption on ${item.device} does not change where "${sentence.text}" starts (${sentence.start} s).`);
         if (sample.audio !== undefined && sample.caption !== undefined) {
@@ -199,3 +213,43 @@ export async function verifyRecording(options: VerifyOptions): Promise<VerifyRep
     ok: problems.length === 0,
   };
 }
+
+/** How a report is written into a timeline file. */
+export function checksSection(report: VerifyReport): Record<string, unknown> {
+  return {
+    ok: report.ok,
+    problems: report.problems,
+    streams: report.streams,
+    overlappingSentences: report.overlaps.length,
+    captionAndVoice: {
+      about: 'For each sentence whose caption changes, the frame where the caption changes and the sample where the voice starts were found in the finished file. offsetMs is voice minus caption.',
+      checked: report.sync.checked,
+      maxOffsetMs: report.sync.maxOffsetMs,
+      meanOffsetMs: report.sync.meanOffsetMs,
+      toleranceMs: report.sync.toleranceMs,
+      samples: report.sync.samples,
+    },
+  };
+}
+
+/** Check a recording made earlier, from its `.timeline.json`, and write the result back into that file. */
+export async function checkRecording(timelineFile: string): Promise<VerifyReport> {
+  const document = JSON.parse(readFileSync(timelineFile, 'utf8')) as {
+    video: { file: string; width: number; height: number; fps: number; duration: number };
+    settings?: { beat?: number; sentenceGap?: number };
+    devices: Array<{ id: string; captions?: Rect }>;
+    events: TimelineItem[];
+    checks?: unknown;
+  };
+  const report = await verifyRecording({
+    file: join(dirname(timelineFile), document.video.file),
+    items: document.events,
+    captions: new Map(document.devices.filter((device) => device.captions).map((device) => [device.id, device.captions as Rect])),
+    expected: { width: document.video.width, height: document.video.height, fps: document.video.fps, duration: document.video.duration },
+    window: Math.min(document.settings?.sentenceGap ?? 0.18, document.settings?.beat ?? 0.6),
+  });
+  document.checks = checksSection(report);
+  writeFileSync(timelineFile, `${JSON.stringify(document, null, 2)}\n`);
+  return report;
+}
+

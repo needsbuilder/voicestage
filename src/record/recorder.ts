@@ -28,7 +28,7 @@ import { findChrome } from './chrome.js';
 import { DEVICE_GEOMETRY, findButtonCall, pointerCall, POINTER_SCRIPT } from './in-page.js';
 import { mixTrack, SAMPLE_RATE, Speech, writeWav, type RenderedClip } from './speech.js';
 import { buildTimeline, type Press, type Rect, type TimelineDevice, type TimelineItem } from './timeline.js';
-import { verifyRecording, type VerifyReport } from './verify.js';
+import { checksSection, verifyRecording, type VerifyReport } from './verify.js';
 import { FrameClock, mux, VideoEncoder } from './video.js';
 
 const run = promisify(execFile);
@@ -300,7 +300,12 @@ export async function recordScenario(options: RecordOptions): Promise<RecordResu
     await cdp.send('Page.startScreencast', { format: 'png', everyNthFrame: 1 });
     await Promise.race([started, sleep(5000)]);
     if (!clock) throw new RecordError('Chrome did not deliver any picture of the page.');
-    const origin = clock.start;
+    // What the page and the stage report reaches the picture a little after the moment they report:
+    // a frame of latency in the browser, and on average half a frame more, because the video has
+    // fewer frames than the screen. So a moment on the clock is that much later in the video.
+    // Measured on finished files, voice and caption are closest with this allowance.
+    const pictureLagMs = Math.round(500 / fps) + 8;
+    const origin = clock.start - pictureLagMs;
     log(`Recording "${scenario.name}" at ${width}x${height}, ${fps} frames a second.`);
     await sleep(leadMs);
 
@@ -424,21 +429,6 @@ function timelineDocument(input: {
     })),
     // What is heard and what is seen, in order. `start` and `end` are seconds into the video.
     events: input.items,
-    checks: report
-      ? {
-          ok: report.ok,
-          problems: report.problems,
-          streams: report.streams,
-          overlappingSentences: report.overlaps.length,
-          captionAndVoice: {
-            about: 'For each sentence whose caption changes, the frame where the caption changes and the sample where the voice starts were found in the finished file. offsetMs is voice minus caption.',
-            checked: report.sync.checked,
-            maxOffsetMs: report.sync.maxOffsetMs,
-            meanOffsetMs: report.sync.meanOffsetMs,
-            toleranceMs: report.sync.toleranceMs,
-            samples: report.sync.samples,
-          },
-        }
-      : undefined,
+    checks: report ? checksSection(report) : undefined,
   };
 }

@@ -53,12 +53,13 @@ Restart your server as often as you like; the stage does not need restarting wit
 | **Voice** | Speech in through the browser's Web Speech API (hold to talk, tap to toggle, or a wake word), speech out through speech synthesis, with a voice menu for choosing who sounds like what. Everything can be typed instead, and captions are always shown. Works with no microphone and with the sound off, and says in plain words when the microphone or the sound cannot be used and why. See [Voice](#voice). |
 | **Assistant** | One agent loop per device, with a pluggable provider: `anthropic`, `bedrock`, `openai-compatible`, `claude-code` (a local Claude Code login, no key), or `scripted` (no model). |
 | **MCP client** | The official `@modelcontextprotocol/client` v2 over Streamable HTTP. Protocol 2025-11-25 with a session by default (2026-07-28 on request). Tools, structured output, progress notifications, form elicitation, resource reads, list-changed and logging notifications. The negotiated protocol version is shown in the inspector. A new session is started by itself when your server restarts. |
-| **MCP Apps** | When a tool links a `ui://` card, the card is rendered on the device screen in a sandboxed iframe using the official host bridge (`AppBridge` from `@modelcontextprotocol/ext-apps`). Tool calls and resource reads made by the card go back through the host to the card's own server. A tool result with no card gets a clean default card drawn from its structured content. |
+| **MCP Apps** | When a tool links a `ui://` card, the card is rendered on the device screen with the official host bridge (`AppBridge` from `@modelcontextprotocol/ext-apps`), through a sandbox proxy on a second origin, as the MCP Apps specification requires of a web host. Tool calls and resource reads made by the card go back through the host to the card's own server. A tool result with no card gets a clean default card drawn from its structured content. |
 | **Questions from a server** | A form elicitation is asked aloud and shown on the screen. The person answers by voice or by tapping, and the answer is returned to the server. |
 | **Proactive announcements** | A device can subscribe to a server-sent events URL, and to notifications on the MCP connection, and turn chosen events into an announcement: an indicator first, then the voice, optionally with a tool call whose result goes on the screen. |
 | **Agent Skills** | Loads `SKILL.md` folders in the open [Agent Skills](https://agentskills.io) format. Names and descriptions are always in the prompt; the body is loaded when the assistant decides it is relevant. |
 | **Inspector** | Per device: a timeline of what was heard, each model turn, every tool call with arguments, result, duration and progress, questions and answers, events, errors. Copy any entry, or the whole timeline, as JSON. A second tab shows each connection (protocol version, session, capabilities, instructions, tools) and lets you call a tool by hand. |
 | **Scenarios** | YAML files of steps across devices, with expectations. Run them from the command line for CI, or play them in the UI at a pace fit for recording. |
+| **Recording** | `npm run record -- scenario.yaml` plays a scenario with nobody at the keyboard and writes a 1920x1080 video with every line audible, and a timeline of what is said and shown, in seconds of that video. For showing an app that has no device to be filmed on. See [Recording a scenario](#recording-a-scenario). |
 
 ![The inspector timeline next to the devices](docs/screenshots/04-hold-and-approval-inspector.png)
 
@@ -178,6 +179,11 @@ steps:
     save: tea
     show: false                              # optional: leave the screen as it is (setup and checks)
 
+  - device: phone
+    call: start_timer                        # the same kind of step, naming the button that makes the call
+    args: { label: tea, seconds: 60 }
+    press: Start again                       # in a recording that button is really pressed, and the card makes the call
+
   - pause: 1.5                               # seconds; only when playing with pacing
 ```
 
@@ -186,6 +192,7 @@ steps:
 - Expected values match loosely: objects match when every listed field matches (keys may be dot paths, `holds.0.status`), and `{ contains: x }`, `{ matches: regex }`, `{ one_of: [...] }`, `{ gt | gte | lt | lte: n }`, `{ exists: true }`, `{ length: n }` and `{ not: x }` are understood. `tool` also takes `error: true` (the call must have failed) and `times: n`.
 - `{{name.path}}` reads saved results. A string that is exactly one placeholder keeps the value's type. `{{a.b | "fallback"}}` gives a default.
 - When a step throws (a missing device, an event that never arrives), the steps after it are skipped. A failed expectation does not stop the run.
+- A `call` step with `press` is a person pressing a button on a card. Where there is a card and something to press it with (a [recording](#recording-a-scenario)), the button with that label is pressed with a real pointer event and the step waits for the call the card then makes. From the command line and in the UI's player there is nothing to press with, so the call is made directly with the step's `args`. The expectations are the same either way.
 
 ### Running scenarios
 
@@ -199,6 +206,38 @@ npm run scenario -- a.yaml b.yaml --json                        # machine-readab
 The exit code is 0 when every scenario passes. In the UI, pick a scenario in the top bar and press **Play**; **Step by step** waits for **Next** before each step, which helps when recording. Lines are spoken at their natural pace, and the people's lines can be voiced too.
 
 In scripted mode a device also answers free speech: what you say is matched against the lines of the loaded scenarios (loosely, so speech recognition does not have to be perfect) and the matching script is replayed. A line written for one device can be replayed on any device that has the tools it calls.
+
+## Recording a scenario
+
+If your app is for a device you cannot film, record the stage instead:
+
+```bash
+npm run record -- examples/holdon/scenarios/b-utility-bill.yaml --out out/recordings
+```
+
+With nobody at the keyboard, this writes two files:
+
+- `out/recordings/b-utility-bill.mp4`: 1920x1080, 30 frames a second, H.264 with AAC sound. The stage plays the scenario with the scripted provider. The picture shows the devices and who is at each one, without the controls for driving them and without the inspector (`--controls` and `--inspector` put them back). Every line is heard, in a different voice for each device and each person.
+- `out/recordings/b-utility-bill.timeline.json`: what is heard and what is seen, with `start` and `end` in seconds from the first frame of the video: each utterance (who, the voice, the text, and each sentence in it), each card shown, each tool call, each notification, each question, each button press. Use it to place narration, captions or cuts in an editor.
+
+```json
+{ "kind": "utterance", "start": 1.072, "end": 8.177, "device": "kitchen", "who": "Margaret", "role": "person", "voice": "Moira",
+  "text": "My Con Edison bill came in the mail. It's $182.40. Please pay it with my card.",
+  "sentences": [{ "start": 1.072, "end": 6.407, "text": "My Con Edison bill came in the mail. It's $182.40." }, { "start": 6.621, "end": 8.177, "text": "Please pay it with my card." }] }
+{ "kind": "press", "start": 32.07, "at": 33.144, "end": 33.779, "device": "phone", "who": "Sarah", "label": "Approve", "text": "Sarah presses \"Approve\" on Sarah's phone" }
+```
+
+**How picture and sound are kept together.** A capture of the screen cannot hear a browser speak, and a voice rendered somewhere else never lasts exactly as long as the browser's. So while recording, the stage does not speak. Each sentence is rendered to an audio clip with the macOS `say` command, in the voice the stage would have chosen in the browser. The page holds the sentence's caption for exactly the length of its clip, and reports the moment the caption went up; the clip is laid into the sound track at that moment. The picture is Chrome's own screencast, whose frames carry the time they were drawn, resampled to a steady frame rate. Picture, sound and timeline are all placed by one clock.
+
+**Pauses.** A new speaker waits a beat after the last one stopped, and so does any line after a card has appeared, so that a viewer can look at it. `--beat 900` makes that beat 900 ms (the default is 600); `--gap` is the short pause between sentences of one line (180). `--lead` and `--tail` are the stillness at the start and the end.
+
+**Buttons.** A step that has a person press a button on a card (`press:` on a `call` step) is done with a real pointer event on the button in the card's iframe. A pointer is drawn moving to it, because a capture has no mouse cursor in it.
+
+**Checks.** The finished file is then checked, on the file itself: both streams are there with the size, rate and codecs asked for; no two sentences are heard at once; and for every sentence whose caption changes, the frame in which the caption changes and the sample at which the voice starts are found in the decoded video and audio and compared. The result is in the timeline under `checks`, and the command fails if voice and caption are more than 100 ms apart anywhere. For the three Hold On scenarios recorded on the author's machine the largest distance was 46 ms. `voicestage check-recording out/recordings/b-utility-bill.timeline.json` runs the checks again on a recording made earlier.
+
+**What it needs.** macOS (for `say`), Google Chrome, and FFmpeg with libx264 (`brew install ffmpeg`). Elsewhere the command stops and says so; play the scenario in the browser with `?present=1` (the stage without its controls) and `?inspector=0`, and use a screen recorder.
+
+**Good to know.** The people's lines are rendered before recording starts. A device's lines are rendered as they come up, since they depend on what the server answers; that can add up to half a second before a device speaks, on top of the beat, the first time a sentence is rendered. Rendered clips are kept in the system's temporary folder, so a second take has most of them ready. The scenario runs against your real server, so put it in the state the scenario expects before each take (for Hold On: `npm run seed:reset`). A scenario that fails is still recorded, and the command says which step failed.
 
 ## Voice
 
@@ -240,15 +279,20 @@ This opens visible Google Chrome windows (not a bundled Chromium, which has no r
 
 ## MCP Apps on the device screen
 
-A tool that carries `_meta.ui.resourceUri` gets its card. Voicestage reads the `ui://` resource through the device's MCP connection, and the browser loads it like this:
+A tool that carries `_meta.ui.resourceUri` gets its card. Voicestage reads the `ui://` resource through the device's MCP connection and loads it the way the MCP Apps specification (2026-01-26, "Sandbox proxy") requires of a host that is a web page:
 
-- in an `<iframe sandbox="allow-scripts allow-forms">`: an opaque origin, with no access to the page around it, its storage or its cookies;
-- behind a Content-Security-Policy injected at the top of the document: `default-src 'none'`, inline script and style only, and network access only to the origins the resource declares in `_meta.ui.csp`;
-- connected to `AppBridge` over `postMessage`, which carries the MCP Apps protocol: the `ui/initialize` handshake, host context (theme, locale, platform, container size, the tool), tool input and tool result to the card, and from the card `tools/call`, `resources/read`, `ui/open-link` (asks you first), `ui/message` (spoken as if the person had said it), `ui/update-model-context`, logging and size changes.
+- The stage starts a second listener on another localhost port. It serves one page, the **sandbox proxy**, on an origin that is not the stage's.
+- The card's place on the device screen is an iframe that loads the proxy (`sandbox="allow-scripts allow-same-origin allow-forms"`). The proxy says it is ready (`ui/notifications/sandbox-proxy-ready`), the host sends it the card's HTML (`ui/notifications/sandbox-resource-ready`), and the proxy loads that in an iframe of its own and passes every other message both ways.
+- The proxy is served with a Content-Security-Policy built from what the resource declares in `_meta.ui.csp`: `default-src 'none'`, inline script and style only, `object-src 'none'`, and network access only to the declared origins. The card's document inherits it.
+- `AppBridge` carries the MCP Apps protocol over `postMessage`: the `ui/initialize` handshake, host context (theme, locale, platform, container size, the tool), tool input and tool result to the card, and from the card `tools/call`, `resources/read`, `ui/open-link`, `ui/message` (spoken as if the person had said it), `ui/update-model-context`, logging and size changes.
 
-Calls a card makes are sent to the stage server, which makes them on the device's own connection to the server the card came from, and nowhere else. They appear in the inspector with origin `card`.
+So a card has a real origin of its own: `localStorage` works in it. And that origin is not the stage's: the stage's page, its storage and its API are out of the card's reach. The API answers only the stage's own page; a request from any other origin, the cards' included, is refused.
 
-**Where this departs from the specification.** The MCP Apps specification (2026-01-26, "Sandbox proxy") says that a host which is a web page MUST wrap the card in an intermediate sandbox proxy served from a different origin, with `allow-scripts allow-same-origin`. Voicestage does not do that yet. It loads the card straight into one sandboxed iframe from its own page, so the sandbox attribute and the policy above are what stand between a card and the page, and the card runs with an opaque origin. Checked in Chrome 154: inside a card `window.origin` is `null`, the page around it cannot be reached, undeclared `fetch` is blocked, and `localStorage` and `document.cookie` throw `SecurityError`. A card that needs storage or a real origin will therefore work in a conforming host and fail here. The handshake, tool input and result, and the calls a card makes back through the host are the same either way.
+Calls a card makes are sent to the stage server, which makes them on the device's own connection to the server the card came from, and nowhere else. They appear in the inspector with origin `card`. When a card asks to open a link, the device asks the person on its own screen ("Open consumer.ftc.gov?"), and opens the link in a new tab only on a yes. It is never a browser dialog, which would stop the page.
+
+Checked in Chrome 154 by `test/cards.browser.test.ts`, which loads the example timer card both ways. Through the proxy the card's origin is the proxy's, storage works (the card counts its timers in `localStorage`), the stage is unreachable (`SecurityError`), undeclared network requests and requests to the stage's API fail, and a real pointer click on the card's button makes the card call its tool through the host. Without the proxy the same card has the origin `null` and storage throws.
+
+Two things to know. All cards share the proxy's origin, whichever server or simulated device they belong to, so they share its storage; a real host may well give each server its own. And a stage started from code without the proxy (`createStageApp` and `listen` instead of `serveStage`) falls back to one sandboxed iframe with no origin.
 
 ## Agent Skills
 
@@ -282,14 +326,20 @@ Three scenarios ship with it: a caller claiming to be the IRS demanding gift car
 voicestage dev [options]                  start the stage, UI served by Vite        (npm run dev)
 voicestage start [options]                start the stage with the built UI         (npm start)
 voicestage scenario <file...> [options]   run scenarios, report pass or fail        (npm run scenario)
+voicestage record <file...> --out <dir>   record scenarios to video with sound      (npm run record)
+voicestage check-recording <timeline...>  check recordings made earlier
 voicestage example-server [--port N]      run the example MCP server on its own     (npm run example-server)
 
 --config <file>   --mcp <url>   --header "Name: value"   --events <url>   --skills <folder>
 --provider <id>   --model <id>  --port <n>   --scenarios <path>
 --mode scripted|live   --json   --trace   --paced
+--out <dir>   --beat <ms>   --gap <ms>   --lead <ms>   --tail <ms>   --size <WxH>   --fps <n>
+--inspector   --controls   --chrome <path>   --no-verify
 ```
 
-The stage only listens on localhost, and refuses requests whose `Host` or `Origin` is not this machine, because its API can make tool calls with the tokens in your configuration.
+The stage only listens on localhost and refuses requests whose `Host` is not this machine. Its API can make tool calls with the tokens in your configuration, so it answers only the stage's own page: a browser request from any other origin, on this machine or not, is refused. The sandbox proxy for cards listens on the next free port after the stage's.
+
+URL switches for filming by hand: `?present=1` shows the stage without the controls for driving it, `?inspector=0` hides the inspector, `?voice=0` turns the sound off.
 
 ## Testing
 
@@ -312,9 +362,12 @@ npm run typecheck
 | `test/stage.e2e.test.ts` | A real MCP client against the example server: protocol 2025-11-25 and 2026-07-28, sessions, structured output, progress, elicitation by voice and by screen, the card resource, announcements, the indicator mode, connection failures |
 | `test/api.test.ts` | The stage server's API and event stream, a scenario played step by step, card tool calls, the localhost check |
 | `test/timer-card.test.ts` | The example card driven by the official `AppBridge` in jsdom |
+| `test/sandbox.test.ts` | The sandbox proxy: the one page it serves, its policy built from what a card declares, who may embed it |
+| `test/cards.browser.test.ts` | In Google Chrome: a card through the sandbox proxy (its own origin, working storage, no way to the stage, a real click calling a tool) and the same card without it. Skipped where there is no Chrome. |
+| `test/record.test.ts` | Recording, without a browser: frames at a steady rate from timestamped frames, clips laid into a sound track, the timeline, the pauses, the voice list of `say` |
 | `test/holdon.e2e.test.ts` | Starts a Hold On server on a free port and plays its three scenarios in scripted mode through the real client. Skipped unless a built Hold On checkout is at `../holdon` or `HOLDON_DIR`. |
 
-`npm run screenshots` retakes the pictures in `docs/screenshots` with headless Chrome. `npm run voice:check` checks speech and recognition in a visible Google Chrome; see [Voice](#voice).
+`npm run screenshots` retakes the pictures in `docs/screenshots` with headless Chrome. `npm run voice:check` checks speech and recognition in a visible Google Chrome; see [Voice](#voice). `npm run record` checks every recording it makes; see [Recording a scenario](#recording-a-scenario).
 
 ## How it is put together
 
@@ -332,6 +385,8 @@ src/
     providers/           scripted, anthropic, bedrock, openai-compatible, claude-code, the shared tool loop
     scenario/            scenario files and the runner
   server/app.ts          HTTP API, event stream, static UI
+  server/sandbox.ts      the sandbox proxy for cards, on a second port
+  record/                recording a scenario to video: voices, picture, timeline, checks
   example-server/        the built-in example MCP server and its card
   shared/                types, default card, templates, speech matching (used by server and browser)
 ui/src/                  the React UI: devices, the MCP Apps host, the inspector, voice
@@ -345,7 +400,8 @@ The stage server holds the MCP connections and runs the assistants, because mode
 - **It is a stand-in, not an emulator.** How a real assistant chooses tools, phrases things, lays out cards or delivers notifications will differ. Use Voicestage to develop and demonstrate; test on the real platform when you can.
 - **Speech recognition is the browser's.** It needs Chrome, Edge or Safari and a microphone permission, and in Chrome the audio is processed by the browser vendor's online service. Typing always works. The wake word is matched in the recognised text, not detected on the audio. Recognition has been checked with synthetic speech fed to Chrome's recogniser, not with a person at a microphone.
 - **Voices are the browser's too.** Which ones exist depends on the operating system, and the automatic choice knows the common macOS, Windows and Chrome voice names, not every system's. Browsers will not speak until the page has been clicked once; until then lines are shown without sound, and a notice says so. Voice has been checked in Google Chrome on macOS only.
-- **Cards are sandboxed with an iframe attribute and a policy, not the sandbox proxy on a separate origin that the MCP Apps specification requires of a web host.** Cards that use storage or need a real origin will not work here. See [MCP Apps on the device screen](#mcp-apps-on-the-device-screen).
+- **All cards share one sandbox origin.** Cards are loaded through a sandbox proxy on a second origin, as the MCP Apps specification requires, but there is one such origin for every server and every simulated device, so cards share its storage. See [MCP Apps on the device screen](#mcp-apps-on-the-device-screen).
+- **Recording needs macOS.** The voices of a recording are rendered with the `say` command; the picture needs Google Chrome and FFmpeg. See [Recording a scenario](#recording-a-scenario).
 - **Form elicitation only.** URL-mode elicitation is declined. Sampling and roots are not offered to servers.
 - **Streamable HTTP only.** No stdio servers, and no OAuth flow: put a token in a header.
 - **One browser tab is the audience.** Speech pacing follows the tabs that are open; several open tabs will each speak.

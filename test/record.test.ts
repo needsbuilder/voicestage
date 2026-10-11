@@ -6,7 +6,7 @@
 import { describe, expect, it } from 'vitest';
 import { applyGain, loudness, mixTrack, parseSayVoices, readWav, SAMPLE_RATE, trimSilence, writeWav } from '../src/record/speech.js';
 import { buildTimeline, overlappingSentences, type TimelineInput } from '../src/record/timeline.js';
-import { audioOnset, firstChange } from '../src/record/verify.js';
+import { audioOnset, strongestChange } from '../src/record/verify.js';
 import { FrameClock } from '../src/record/video.js';
 import { earliestStart, speakerKey, type RecordingMark } from '../src/shared/recording.js';
 import { splitSentences } from '../src/shared/sentences.js';
@@ -248,11 +248,13 @@ describe('the timeline that goes with a video', () => {
 });
 
 describe('finding a caption change in the decoded picture', () => {
-  it('reports the first frame in which the region changes, as a time', () => {
+  it('reports the frame in which the words change, not the caption before them dimming', () => {
     const activity = new Float32Array(90);
+    // The old caption fades over several frames, then the new words replace it in one.
+    for (let frame = 40; frame < 45; frame += 1) activity[frame] = 0.5;
     activity[45] = 3.2;
     activity[46] = 1.1;
-    expect(firstChange(activity, 30, 1.2, 1.8)).toBeCloseTo(1.5, 5);
-    expect(firstChange(activity, 30, 1.6, 2.5)).toBeUndefined();
+    expect(strongestChange(activity, 30, 1.2, 1.8)).toBeCloseTo(1.5, 5);
+    expect(strongestChange(activity, 30, 1.6, 2.5)).toBeUndefined();
   });
 });

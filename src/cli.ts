@@ -30,6 +30,7 @@ Usage
   voicestage start [options]            Start the stage (built UI; run "npm run build" first)
   voicestage scenario <file...> [options]   Run scenarios and report pass or fail
   voicestage record <file...> --out <dir>   Record scenarios to video files with sound (macOS)
+  voicestage check-recording <timeline.json...>   Check recordings made earlier, from their timelines
   voicestage example-server [--port N]  Run the built-in example MCP server
 
 What to connect to (first match wins)
@@ -355,6 +356,18 @@ async function main(): Promise<void> {
   }
   if (command === 'record') {
     process.exit(await record(rest, flags));
+  }
+  if (command === 'check-recording') {
+    if (rest.length === 0) throw new ConfigError('Give the timeline of a recording: voicestage check-recording <name.timeline.json>');
+    const { checkRecording } = await import('./record/verify.js');
+    let bad = 0;
+    for (const file of rest) {
+      const report = await checkRecording(resolve(file));
+      console.log(`${file}: ${report.ok ? 'ok' : 'PROBLEMS'}. ${report.streams.video?.codec ?? 'no video'} ${report.streams.video?.width}x${report.streams.video?.height} at ${report.streams.video?.fps} fps, ${report.streams.audio?.codec ?? 'no audio'}, ${report.streams.duration.toFixed(2)} s; ${report.overlaps.length} overlapping sentences; ${report.sync.checked} captions checked against the voice, at most ${report.sync.maxOffsetMs} ms apart.`);
+      for (const problem of report.problems) console.log(`  PROBLEM: ${problem}`);
+      if (!report.ok) bad += 1;
+    }
+    process.exit(bad === 0 ? 0 : 1);
   }
   if (command === 'example-server') {
     const { startExampleServer } = await import('./example-server/server.js');

@@ -75,13 +75,13 @@ Times below come from the build session's own log. The code was written with an 
 - **The security model is easy to explain** to someone pointing the simulator at their own server: a card can only ask the host, and the host only talks to the card's own server.
 
 **What needs work.**
-- **The sandbox proxy is required and not provided.** The specification says a web host MUST use a proxy on a second origin. The npm package has the bridge half and no proxy page, and its README says there is no supported host. We shipped a single sandboxed iframe, which works and does not conform, and a card that uses `localStorage` fails in it (V-02). This is our largest known gap, and we think most small hosts will fall into it the same way.
+- **The sandbox proxy is required and not provided.** The specification says a web host MUST use a proxy on a second origin. The npm package has the bridge half and no proxy page, and its README says there is no supported host. We first shipped a single sandboxed iframe, which worked and did not conform (a card that uses `localStorage` failed in it), and then wrote the proxy ourselves: 178 lines, and three decisions with security consequences that a shipped proxy would have made for us (V-02). We think most small hosts will take the first step and not the second.
 - **Declarations are written out structurally**, so a type error is a screen of braces, and the host entry point does not export `EXTENSION_ID` (V-13).
 - **Nothing for hosts without a keyboard.** How large a card may be on a phone or a countertop display, whether the host may scale it, what a screenless device does, whether anything is spoken when a card appears. We scale cards with CSS `zoom` to fit a simulated screen. That is a guess, and it has a side effect on automated testing (F-10).
 
 **Zero to a first card.** Server side: two helper calls. Host side: one component of 141 lines, and the quarter of an hour described above.
 
-**Would we build with it again?** Yes, and next time with the proxy. Seeing the card is what turned "the tool returned JSON" into a product someone could judge.
+**Would we build with it again?** Yes, and we would write the proxy on the first day. Seeing the card is what turned "the tool returned JSON" into a product someone could judge.
 
 ## 4. Agent Skills
 
@@ -164,7 +164,7 @@ Voicestage also has `anthropic`, `bedrock` and `openai-compatible` providers. We
 | Critical | A published description of the host's behaviour (revision, client capabilities, what is spoken and shown, how notifications arrive), or simulator access | Alexa+ | Every such choice in Voicestage is a guess (V-15) |
 | Critical | A standard notification for events meant for the person, on both revisions, with replay after reconnecting | MCP specification | Proactive announcements are a second, home-made channel in both our projects (V-03) |
 | Important | Session recovery in the client transport, or a named error for a lost session | MCP TypeScript SDK | Every server restart broke every device (V-01) |
-| Important | The sandbox proxy page in the `ext-apps` package, and a word on what a local development host may do | MCP Apps | We shipped a host that does not conform (V-02) |
+| Important | The sandbox proxy page in the `ext-apps` package, and a word on where the card's policy is applied | MCP Apps | We first shipped a host that did not conform, then wrote the proxy ourselves (V-02) |
 | Important | A field on tool results for text to be spoken as written, and speech hints for elicitation choices | MCP specification | `say_to_user` is a private convention; a live model reworded it (V-08) |
 | Important | A supported way to test speech recognition with no person present | Chrome | Voice input could only be tested through an undocumented path (V-04) |
 | Important | Guidance for hosts without a keyboard: card size on small screens, devices with no screen, what is said when a card appears | MCP Apps, MCP specification | We decided each of these alone |
