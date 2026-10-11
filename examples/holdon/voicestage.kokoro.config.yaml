@@ -97,3 +97,5 @@ recording:
     # "payees" comes out close to "pays". With the hyphen both halves of the word are heard.
     payee: pay-ee
     payees: pay-ees
+    # The comma in "I know them, Mom." is passed over, which comes out like "I know the mom". A semicolon gives the pause.
+    'them, Mom': 'them; Mom'

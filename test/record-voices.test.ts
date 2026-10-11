@@ -253,6 +253,7 @@ describe('another spelling for the voice', () => {
     // Only a code after "SIM-" is spelled out.
     expect(spoken('SIMPLE: BAD CAFE 2026.')).toBe('SIMPLE: BAD CAFE 2026.');
     expect(spoken('Con Edison is on my list of official payees. It is now a confirmed payee.')).toBe('Con Edison is on my list of official pay-ees. It is now a confirmed pay-ee.');
+    expect(spoken('Sarah added a note: "I know them, Mom.')).toBe('Sarah added a note: "I know them; Mom.');
   });
 });
 
