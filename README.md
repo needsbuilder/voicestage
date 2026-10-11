@@ -59,7 +59,7 @@ Restart your server as often as you like; the stage does not need restarting wit
 | **Agent Skills** | Loads `SKILL.md` folders in the open [Agent Skills](https://agentskills.io) format. Names and descriptions are always in the prompt; the body is loaded when the assistant decides it is relevant. |
 | **Inspector** | Per device: a timeline of what was heard, each model turn, every tool call with arguments, result, duration and progress, questions and answers, events, errors. Copy any entry, or the whole timeline, as JSON. A second tab shows each connection (protocol version, session, capabilities, instructions, tools) and lets you call a tool by hand. |
 | **Scenarios** | YAML files of steps across devices, with expectations. Run them from the command line for CI, or play them in the UI at a pace fit for recording. |
-| **Recording** | `npm run record -- scenario.yaml` plays a scenario with nobody at the keyboard and writes a 1920x1080 video with every line audible, and a timeline of what is said and shown, in seconds of that video. For showing an app that has no device to be filmed on. See [Recording a scenario](#recording-a-scenario). |
+| **Recording** | `npm run record -- scenario.yaml` plays a scenario with nobody at the keyboard and writes a 1920x1080 video with every line audible, and a timeline of what is said and shown, in seconds of that video. The voices are the system's, or come from a program you name, such as a neural voice that runs locally. For showing an app that has no device to be filmed on. See [Recording a scenario](#recording-a-scenario). |
 
 ![The inspector timeline next to the devices](docs/screenshots/04-hold-and-approval-inspector.png)
 
@@ -119,7 +119,7 @@ devices:
   - id: kitchen                # used in scenarios and announce rules
     name: Kitchen display
     kind: display              # display | speaker | phone
-    person: { name: Margaret, role: the account owner, voice: { name: Moira } }   # voice: for her lines when a scenario is played
+    person: { name: Margaret, role: the account owner, voice: { name: Moira, rate: 0.95 } }   # voice: for her lines when a scenario is played
     servers:
       - id: shop
         headers: { Authorization: "Bearer ${MARGARET_TOKEN}" }   # this device's own headers
@@ -131,10 +131,18 @@ devices:
 
 scenarios:                     # files, or folders of *.yaml
   - ./scenarios
+
+recording:                     # optional, and only read by "voicestage record"
+  voices:                      # render the voices with this program, not with the system voices
+    name: my-tts
+    command: my-tts --voice {voice} --rate {rate} --out {out} {text}
+  pronounce:                   # another spelling for the voice; captions keep the text as written
+    IRS: I R S
 ```
 
 - `${NAME}` and `${NAME:-fallback}` are replaced from the environment anywhere in the file, so tokens do not have to be written into it.
 - Relative paths are resolved from the folder of the configuration file.
+- `recording` is explained under [Voices from another program](#voices-from-another-program).
 - When two servers on one device have a tool with the same name, the assistant sees them as `server__tool`.
 - A tool marked for its card only (`_meta.ui.visibility` without `model`) is hidden from the assistant and still callable by the card.
 
@@ -218,26 +226,81 @@ npm run record -- examples/holdon/scenarios/b-utility-bill.yaml --out out/record
 With nobody at the keyboard, this writes two files:
 
 - `out/recordings/b-utility-bill.mp4`: 1920x1080, 30 frames a second, H.264 with AAC sound. The stage plays the scenario with the scripted provider. The picture shows the devices and who is at each one, without the controls for driving them and without the inspector (`--controls` and `--inspector` put them back). Every line is heard, in a different voice for each device and each person.
-- `out/recordings/b-utility-bill.timeline.json`: what is heard and what is seen, with `start` and `end` in seconds from the first frame of the video: each utterance (who, the voice, the text, and each sentence in it), each card shown, each tool call, each notification, each question, each button press. Use it to place narration, captions or cuts in an editor.
+- `out/recordings/b-utility-bill.timeline.json`: what is heard and what is seen, with `start` and `end` in seconds from the first frame of the video: each utterance (who, the voice and what rendered it, the text, and each sentence in it), each card shown, each tool call, each notification, each question, each button press. Use it to place narration, captions or cuts in an editor.
 
 ```json
-{ "kind": "utterance", "start": 1.072, "end": 8.177, "device": "kitchen", "who": "Margaret", "role": "person", "voice": "Moira",
+{ "kind": "utterance", "start": 1.072, "end": 8.177, "device": "kitchen", "who": "Margaret", "role": "person", "voice": "Moira", "renderer": "say",
   "text": "My Con Edison bill came in the mail. It's $182.40. Please pay it with my card.",
   "sentences": [{ "start": 1.072, "end": 6.407, "text": "My Con Edison bill came in the mail. It's $182.40." }, { "start": 6.621, "end": 8.177, "text": "Please pay it with my card." }] }
 { "kind": "press", "start": 32.07, "at": 33.144, "end": 33.779, "device": "phone", "who": "Sarah", "label": "Approve", "text": "Sarah presses \"Approve\" on Sarah's phone" }
 ```
 
-**How picture and sound are kept together.** A capture of the screen cannot hear a browser speak, and a voice rendered somewhere else never lasts exactly as long as the browser's. So while recording, the stage does not speak. Each sentence is rendered to an audio clip with the macOS `say` command, in the voice the stage would have chosen in the browser. The page holds the sentence's caption for exactly the length of its clip, and reports the moment the caption went up; the clip is laid into the sound track at that moment. The picture is Chrome's own screencast, whose frames carry the time they were drawn, resampled to a steady frame rate. Picture, sound and timeline are all placed by one clock.
+**How picture and sound are kept together.** A capture of the screen cannot hear a browser speak, and a voice rendered somewhere else never lasts exactly as long as the browser's. So while recording, the stage does not speak. Each sentence is rendered to an audio clip outside the browser: with the macOS `say` command, in the voice the stage would have chosen in the browser, or with [a program you name](#voices-from-another-program). The page holds the sentence's caption for exactly the length of its clip, and reports the moment the caption went up; the clip is laid into the sound track at that moment. The picture is Chrome's own screencast, whose frames carry the time they were drawn, resampled to a steady frame rate. Picture, sound and timeline are all placed by one clock.
 
 **Pauses.** A new speaker waits a beat after the last one stopped, and so does any line after a card has appeared, so that a viewer can look at it. `--beat 900` makes that beat 900 ms (the default is 600); `--gap` is the short pause between sentences of one line (180). `--lead` and `--tail` are the stillness at the start and the end.
 
 **Buttons.** A step that has a person press a button on a card (`press:` on a `call` step) is done with a real pointer event on the button in the card's iframe. A pointer is drawn moving to it, because a capture has no mouse cursor in it.
 
-**Checks.** The finished file is then checked, on the file itself: both streams are there with the size, rate and codecs asked for; no two sentences are heard at once; and for every sentence whose caption changes, the frame in which the caption changes and the sample at which the voice starts are found in the decoded video and audio and compared. The result is in the timeline under `checks`, and the command fails if voice and caption are more than 100 ms apart anywhere. For the three Hold On scenarios recorded on the author's machine the largest distance was 46 ms. `voicestage check-recording out/recordings/b-utility-bill.timeline.json` runs the checks again on a recording made earlier.
+**Checks.** The finished file is then checked, on the file itself: both streams are there with the size, rate and codecs asked for; no two sentences are heard at once; and for every sentence whose caption changes, the frame in which the caption changes and the sample at which the voice starts are found in the decoded video and audio and compared. The result is in the timeline under `checks`, and the command fails if voice and caption are more than 100 ms apart anywhere. For the three Hold On scenarios recorded on the author's machine the largest distance was 46 ms with the `say` voices and 33 ms with [Kokoro voices](#kokoro). `voicestage check-recording out/recordings/b-utility-bill.timeline.json` runs the checks again on a recording made earlier.
 
-**What it needs.** macOS (for `say`), Google Chrome, and FFmpeg with libx264 (`brew install ffmpeg`). Elsewhere the command stops and says so; play the scenario in the browser with `?present=1` (the stage without its controls) and `?inspector=0`, and use a screen recorder.
+**What it needs.** Google Chrome, FFmpeg with libx264 (`brew install ffmpeg`), and something to render the voices: macOS for `say`, or a [voice program](#voices-from-another-program) named in the configuration. On another system with no voice program the command stops and says so; then play the scenario in the browser with `?present=1` (the stage without its controls) and `?inspector=0`, and use a screen recorder. Recording has only been run on macOS, with either kind of voice.
 
-**Good to know.** The people's lines are rendered before recording starts. A device's lines are rendered as they come up, since they depend on what the server answers; that can add up to half a second before a device speaks, on top of the beat, the first time a sentence is rendered. Rendered clips are kept in the system's temporary folder, so a second take has most of them ready. The scenario runs against your real server, so put it in the state the scenario expects before each take (for Hold On: `npm run seed:reset`). A scenario that fails is still recorded, and the command says which step failed.
+**Good to know.** The people's lines are rendered before recording starts. A device's lines are rendered as they come up, since they depend on what the server answers. The first time a sentence is rendered, the device waits that much longer before it speaks: with `say`, about a second and a half on top of the beat on the author's machine. Rendered clips are kept in the system's temporary folder (in `voicestage-speech`), so a second take has most of them ready, and the command says how many sentences it had to render while recording. The scenario runs against your real server, so put it in the state the scenario expects before each take (for Hold On: `npm run seed:reset`). A scenario that fails is still recorded, and the command says which step failed. An idle device shows the time of day and greets by it, and a card may print a time too, so a take made at two in the morning says "Good night". Starting the command with `TZ` set records the time of another place: `TZ=America/Los_Angeles npm run record -- ...`.
+
+### Voices from another program
+
+The system voices are whatever the machine has. To record with another voice, for example a neural one that runs locally, name a program in the configuration. `voicestage record` then runs it once for each sentence, in place of `say`:
+
+```yaml
+recording:
+  voices:
+    name: my-tts               # written into the timeline
+    command: my-tts --voice {voice} --rate {rate} --out {out} {text}
+  pronounce:                   # optional, see below
+    IRS: I R S
+
+devices:
+  - id: kitchen
+    voice: { name: af_bella }                                          # the device's assistant
+    person: { name: Margaret, voice: { name: bf_emma, rate: 0.92 } }   # the person at it
+```
+
+- **The command** is cut into arguments at spaces (quotes keep words together), or written as a YAML list. No shell is involved, so a sentence is passed as it is, whatever characters are in it. The program is started in the folder of the configuration file, with the environment of `voicestage record`. These names are filled in for each sentence: `{text}`, `{text_file}` (a UTF-8 file that holds the sentence), `{voice}`, `{rate}` (1 is the voice's normal pace), `{lang}` (the device's `voice.lang`, or nothing) and `{out}`. A command needs `{out}` and one of `{text}` and `{text_file}`.
+- **What the program must do**: write a WAV file at `{out}` and exit with 0. Any sample rate will do, mono or stereo; what is not already 48 kHz mono 16-bit is converted with FFmpeg. From there on the clip is treated as a `say` clip is: silence is cut from both ends, each voice gets one gain, and the measured length of the clip is how long its caption stays.
+- **Who gets which voice.** `say` chooses from the system's list. A program has no list, so every speaker needs a name: `voice.name` on each device, and `person.voice.name` for each person who has a line in the scenario, with a `rate` next to it if wanted. The names are handed to the program as they are. In the browser a name that is not a system voice falls back to the automatic choice, so such a configuration still works with `npm run dev`.
+- **`pronounce`** gives the voice another spelling where it reads something wrong. Captions and the timeline keep the text as written, and the timeline adds what the voice was given as `spoken`. A plain entry is a word or phrase, matched whole and with its capitals as written; the longest is tried first. An entry between slashes is a regular expression, applied after the plain ones in the order written, and its replacement may use `$1`: `'/\$([\d,]+)/': '$1 dollars'`. This works with `say` as well.
+- **When it goes wrong**, the command stops and says which of these happened: the program was not found, it stopped with an error (its last lines are shown), it wrote no file, it wrote silence, or a speaker has no voice name. A short clip is rendered for every speaker of the scenario before the browser starts, so most of this is found early. A video with a silent line in it is never written.
+- **In the timeline**, `voices` names the program and its command, and each utterance carries `"renderer": "my-tts"` next to its `voice`. Clips from different programs, and from `say`, are kept apart in the cache.
+- **Time.** A program that loads a speech model for every sentence takes a moment, and no more than two are run at once. A device's lines are rendered as they come up, so on a first take a device can be silent for a few seconds before it answers. A second take finds those sentences in the cache and keeps the usual beat. To render everything again, delete the `voicestage-speech` folder in the system's temporary folder.
+
+Recording with a voice program has only been run on macOS. Linux and Windows are untested.
+
+#### Kokoro
+
+[`scripts/tts/kokoro.py`](scripts/tts/kokoro.py) is such a program. It speaks with [Kokoro](https://huggingface.co/hexgrad/Kokoro-82M), a neural voice whose weights are published under Apache-2.0 and which runs on the computer, through the [kokoro-onnx](https://github.com/thewh1teagle/kokoro-onnx) package (MIT). It is started with [uv](https://docs.astral.sh/uv/), which reads the Python version and the one dependency from the top of the file, so uv is all that has to be installed. The two model files (about 350 MB together) are not in this repository: download `kokoro-v1.0.onnx` and `voices-v1.0.bin` from the [kokoro-onnx release page](https://github.com/thewh1teagle/kokoro-onnx/releases/tag/model-files-v1.0), and set `KOKORO_DIR` to the folder they are in, in the environment or in `.env`.
+
+```bash
+uv run scripts/tts/kokoro.py --list        # the voice names
+uv run scripts/tts/kokoro.py --voice af_bella --out line.wav --text "Nothing has been paid."
+```
+
+```yaml
+recording:
+  voices:
+    name: kokoro
+    command: uv run -q scripts/tts/kokoro.py --voice {voice} --rate {rate} --lang {lang} --text-file {text_file} --out {out}
+```
+
+This was run on macOS on Apple silicon (an M4 Pro), with Python 3.12 and kokoro-onnx 0.6.1, and nowhere else. There a sentence takes about two seconds to render, of which a good second goes to starting Python and loading the model. On a first take of the Hold On scenario with the most lines, with nothing in the cache, the devices answered a person after 2.2 and 2.7 seconds; on the next take, after 0.7 and 0.8.
+
+How it reads, found by printing the phonemes its front end produces and by transcribing the recordings with a speech recogniser:
+
+- A voice whose name starts with `b` is British, and is given British pronunciation unless `{lang}` says otherwise. The voices of other languages need a `voice.lang` on the device; only the English ones were tried.
+- "$2,000" comes out as "dollar two thousand", a phone number such as "800-829-1040" as "eight hundred dash eight hundred twenty-nine dash one thousand forty", and a code such as "SIM-CB798E8E" partly as a word and a number.
+- "payees" comes out close to "pays", and the comma in "I know them, Mom." is passed over.
+- [`examples/holdon/voicestage.kokoro.config.yaml`](examples/holdon/voicestage.kokoro.config.yaml) has a `pronounce` entry for each of these. Its command is in [Example: Hold On](#example-hold-on).
+
+The three Hold On scenarios were recorded this way. Those recordings passed the checks above, and were also checked by transcribing every sentence from the finished file and comparing it with the script. Nobody listened to them while this was written, so how the voices sound is still for a person to judge.
 
 ## Voice
 
@@ -316,6 +379,17 @@ npm install && npm run build && npm run seed:reset && npm start     # http://loc
 npm run dev -- --config examples/holdon/voicestage.config.yaml
 ```
 
+To record one of its scenarios with the system voices, and with Kokoro voices (see [Kokoro](#kokoro) for what that needs):
+
+```bash
+npm run record -- examples/holdon/scenarios/b-utility-bill.yaml --out out/recordings
+
+KOKORO_DIR=/path/to/the/model/files npm run record -- examples/holdon/scenarios/b-utility-bill.yaml \
+    --config examples/holdon/voicestage.kokoro.config.yaml --out out/recordings-kokoro
+```
+
+[`voicestage.kokoro.config.yaml`](examples/holdon/voicestage.kokoro.config.yaml) is the same stage with a Kokoro voice for each speaker (the kitchen display `af_bella`, Sarah's phone `am_michael`, Margaret `bf_emma` a little slower, Sarah `af_sarah`) and the spellings those voices need for dollar amounts, a phone number and the confirmation code.
+
 Three scenarios ship with it: a caller claiming to be the IRS demanding gift cards (stopped, the family is told, it can only be denied), a genuine electric bill (verified, held, approved, paid, receipt), and a contractor nobody can look up (held until Sarah vouches for him). They exercise two roles with two tokens, three MCP Apps cards, an elicitation, progress notifications and announcements on both devices.
 
 ![The request was stopped: the display says so, and the phone shows why](docs/screenshots/09-stopped-request.png)
@@ -365,6 +439,7 @@ npm run typecheck
 | `test/sandbox.test.ts` | The sandbox proxy: the one page it serves, its policy built from what a card declares, who may embed it |
 | `test/cards.browser.test.ts` | In Google Chrome: a card through the sandbox proxy (its own origin, working storage, no way to the stage, a real click calling a tool) and the same card without it. Skipped where there is no Chrome. |
 | `test/record.test.ts` | Recording, without a browser: frames at a steady rate from timestamped frames, clips laid into a sound track, the timeline, the pauses, the voice list of `say` |
+| `test/record-voices.test.ts` | The voices of a recording from a program: its command line, the cache and what keeps renderers apart in it, other sample rates (needs FFmpeg), each way the program can fail, other spellings (`pronounce`), which speakers need a voice name. The program is a stand-in that writes tones; no speech is synthesised. |
 | `test/holdon.e2e.test.ts` | Starts a Hold On server on a free port and plays its three scenarios in scripted mode through the real client. Skipped unless a built Hold On checkout is at `../holdon` or `HOLDON_DIR`. |
 
 `npm run screenshots` retakes the pictures in `docs/screenshots` with headless Chrome. `npm run voice:check` checks speech and recognition in a visible Google Chrome; see [Voice](#voice). `npm run record` checks every recording it makes; see [Recording a scenario](#recording-a-scenario).
@@ -391,6 +466,7 @@ src/
   shared/                types, default card, templates, speech matching (used by server and browser)
 ui/src/                  the React UI: devices, the MCP Apps host, the inspector, voice
 scenarios/, examples/    example scenarios, configurations and a skill
+scripts/tts/kokoro.py    a voice program for recordings: Kokoro, run with uv
 ```
 
 The stage server holds the MCP connections and runs the assistants, because model credentials and a Claude Code login live on the machine, not in the browser. The browser draws the devices, hosts the cards, and does the listening and speaking.
@@ -401,7 +477,7 @@ The stage server holds the MCP connections and runs the assistants, because mode
 - **Speech recognition is the browser's.** It needs Chrome, Edge or Safari and a microphone permission, and in Chrome the audio is processed by the browser vendor's online service. Typing always works. The wake word is matched in the recognised text, not detected on the audio. Recognition has been checked with synthetic speech fed to Chrome's recogniser, not with a person at a microphone.
 - **Voices are the browser's too.** Which ones exist depends on the operating system, and the automatic choice knows the common macOS, Windows and Chrome voice names, not every system's. Browsers will not speak until the page has been clicked once; until then lines are shown without sound, and a notice says so. Voice has been checked in Google Chrome on macOS only.
 - **All cards share one sandbox origin.** Cards are loaded through a sandbox proxy on a second origin, as the MCP Apps specification requires, but there is one such origin for every server and every simulated device, so cards share its storage. See [MCP Apps on the device screen](#mcp-apps-on-the-device-screen).
-- **Recording needs macOS.** The voices of a recording are rendered with the `say` command; the picture needs Google Chrome and FFmpeg. See [Recording a scenario](#recording-a-scenario).
+- **Recording has only been run on macOS.** By default the voices of a recording are rendered with the macOS `say` command. A program named in the configuration can render them instead, and nothing else in recording is tied to macOS, but that has not been tried on Linux or Windows. The picture needs Google Chrome and FFmpeg. See [Recording a scenario](#recording-a-scenario).
 - **Form elicitation only.** URL-mode elicitation is declined. Sampling and roots are not offered to servers.
 - **Streamable HTTP only.** No stdio servers, and no OAuth flow: put a token in a header.
 - **One browser tab is the audience.** Speech pacing follows the tabs that are open; several open tabs will each speak.

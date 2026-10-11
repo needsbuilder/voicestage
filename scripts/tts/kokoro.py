@@ -21,7 +21,7 @@ By hand:
 fetches Python 3.12 and the kokoro-onnx package the first time. Nothing else
 is installed.
 
-The two model files are not in this repository (about 340 MB together). Get
+The two model files are not in this repository (about 350 MB together). Get
 them from the kokoro-onnx project:
 
     https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/kokoro-v1.0.onnx
