@@ -3,6 +3,7 @@ import { DeviceView } from './components/DeviceView';
 import { Inspector } from './components/Inspector';
 import { TopBar } from './components/TopBar';
 import { describeMicProblem } from '../../src/shared/voices';
+import { presenting } from './recording';
 import { connect, dismissMicProblem, getState, showToast, updateSettings, useStage } from './store';
 import { recognitionAvailable, type SoundState } from './voice';
 
@@ -18,7 +19,8 @@ function Notices() {
   const mic = useStage((state) => state.mic);
   const supported = recognitionAvailable;
   const soundNote = SOUND_NOTES[sound];
-  if (!soundNote && !mic && supported) return null;
+  // Presenting is for a camera: whoever films it is not using this microphone.
+  if (presenting || (!soundNote && !mic && supported)) return null;
   return (
     <div className="notices" role="status">
       {soundNote && (
@@ -65,7 +67,7 @@ export function App() {
   }, [stage?.name]);
 
   return (
-    <div className={`app${inspector ? ' app--inspecting' : ''}`}>
+    <div className={`app${inspector ? ' app--inspecting' : ''}${presenting ? ' app--presenting' : ''}`}>
       <TopBar />
       <Notices />
       <main className="stage" data-devices={stage?.devices.length ?? 0}>

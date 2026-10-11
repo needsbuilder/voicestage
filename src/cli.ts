@@ -5,6 +5,7 @@
  *   voicestage dev        start the stage with the UI served by Vite (for working on Voicestage itself)
  *   voicestage start      start the stage with the built UI
  *   voicestage scenario   run scenario files and report pass or fail
+ *   voicestage record     record a scenario to a video file with sound (macOS)
  *   voicestage example-server   run the built-in example MCP server on its own
  */
 import { existsSync } from 'node:fs';
@@ -28,6 +29,7 @@ Usage
   voicestage dev [options]              Start the stage (UI served by Vite)
   voicestage start [options]            Start the stage (built UI; run "npm run build" first)
   voicestage scenario <file...> [options]   Run scenarios and report pass or fail
+  voicestage record <file...> --out <dir>   Record scenarios to video files with sound (macOS)
   voicestage example-server [--port N]  Run the built-in example MCP server
 
 What to connect to (first match wins)
@@ -55,6 +57,18 @@ Scenario runner
   --trace                Also print each device's timeline: what was heard, each model turn,
                          every tool call with its arguments and result
   --paced                Leave pauses between steps, as the UI does
+
+Recording (voicestage record; needs macOS, Google Chrome and ffmpeg)
+  --out <dir>            Where to write <name>.mp4 and <name>.timeline.json (default: out/recordings)
+  --beat <ms>            Shortest pause between two speakers, and after a card appears (default 600)
+  --gap <ms>             Pause between two sentences of one line (default 180)
+  --lead <ms>, --tail <ms>   Stillness before the first step and after the last (default 1000 and 1500)
+  --size <WxH>           Picture size (default 1920x1080)
+  --fps <n>              Frames a second (default 30)
+  --inspector            Show the developer inspector in the recording
+  --controls             Show the controls for driving the stage (hidden by default)
+  --chrome <path>        The browser to record with (also CHROME_PATH)
+  --no-verify            Skip the checks on the finished file
 
 Other
   -h, --help             Show this help
@@ -95,6 +109,17 @@ interface Flags {
   json?: boolean;
   trace?: boolean;
   paced?: boolean;
+  out?: string;
+  beat?: string;
+  gap?: string;
+  lead?: string;
+  tail?: string;
+  size?: string;
+  fps?: string;
+  inspector?: boolean;
+  controls?: boolean;
+  chrome?: string;
+  'no-verify'?: boolean;
   help?: boolean;
   version?: boolean;
 }
@@ -227,6 +252,54 @@ async function runScenarios(files: string[], flags: Flags): Promise<number> {
   return failed === 0 ? 0 : 1;
 }
 
+function numberFlag(name: string, value: string | undefined, min: number, max: number): number | undefined {
+  if (value === undefined) return undefined;
+  const number = Number(value);
+  if (!Number.isFinite(number) || number < min || number > max) throw new ConfigError(`--${name} must be a number between ${min} and ${max}, got "${value}".`);
+  return number;
+}
+
+async function record(files: string[], flags: Flags): Promise<number> {
+  if (files.length === 0) throw new ConfigError('Give at least one scenario file: voicestage record <file...> --out <dir>');
+  const { recordScenario, RecordError } = await import('./record/recorder.js');
+  const size = /^(\d{3,4})x(\d{3,4})$/.exec(flags.size ?? '1920x1080');
+  if (!size) throw new ConfigError(`--size expects WIDTHxHEIGHT, for example 1920x1080, got "${flags.size}".`);
+  let failed = 0;
+  for (const file of files) {
+    const scenario = loadScenarioFile(file);
+    const config = resolveStageConfig(flags, scenario);
+    try {
+      const result = await recordScenario({
+        scenario,
+        config,
+        outDir: resolve(flags.out ?? join('out', 'recordings')),
+        uiDir: join(packageRoot, 'dist', 'ui'),
+        beatMs: numberFlag('beat', flags.beat, 0, 10_000),
+        gapMs: numberFlag('gap', flags.gap, 0, 5000),
+        leadMs: numberFlag('lead', flags.lead, 0, 60_000),
+        tailMs: numberFlag('tail', flags.tail, 0, 60_000),
+        width: Number(size[1]),
+        height: Number(size[2]),
+        fps: numberFlag('fps', flags.fps, 1, 60),
+        inspector: flags.inspector === true,
+        controls: flags.controls === true,
+        chromePath: flags.chrome,
+        verify: flags['no-verify'] !== true,
+        log: (line) => console.log(line),
+      });
+      const report = result.report;
+      console.log(`\n  ${result.video}\n  ${result.timeline}`);
+      console.log(`  ${result.duration.toFixed(2)} s, scenario ${result.run.status}${report ? `, ${report.sync.checked} captions checked against the voice: at most ${report.sync.maxOffsetMs} ms apart` : ''}`);
+      if (report && !report.ok) for (const problem of report.problems) console.log(`  PROBLEM: ${problem}`);
+      if (result.run.status !== 'passed' || (report && !report.ok)) failed += 1;
+    } catch (error) {
+      if (error instanceof RecordError) throw new ConfigError(error.message);
+      throw error;
+    }
+  }
+  return failed === 0 ? 0 : 1;
+}
+
 async function main(): Promise<void> {
   loadDotEnv();
   const { values, positionals } = parseArgs({
@@ -245,6 +318,17 @@ async function main(): Promise<void> {
       json: { type: 'boolean' },
       trace: { type: 'boolean' },
       paced: { type: 'boolean' },
+      out: { type: 'string', short: 'o' },
+      beat: { type: 'string' },
+      gap: { type: 'string' },
+      lead: { type: 'string' },
+      tail: { type: 'string' },
+      size: { type: 'string' },
+      fps: { type: 'string' },
+      inspector: { type: 'boolean' },
+      controls: { type: 'boolean' },
+      chrome: { type: 'string' },
+      'no-verify': { type: 'boolean' },
       help: { type: 'boolean', short: 'h' },
       version: { type: 'boolean', short: 'v' },
     },
@@ -268,6 +352,9 @@ async function main(): Promise<void> {
     const code = await runScenarios(rest, flags);
     // Model providers may keep helper processes alive; the work is done.
     process.exit(code);
+  }
+  if (command === 'record') {
+    process.exit(await record(rest, flags));
   }
   if (command === 'example-server') {
     const { startExampleServer } = await import('./example-server/server.js');

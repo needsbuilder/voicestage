@@ -11,7 +11,9 @@
  * What is written here was checked against Google Chrome 154 on macOS with
  * scripts/voice-check.mjs; the comments say what was observed.
  */
+import { splitSentences } from '../../src/shared/sentences';
 import { afterWakeWord, chooseVoice, describeMicProblem, type MicProblem, type VoiceInfo } from '../../src/shared/voices';
+import { recording } from './recording';
 
 export interface VoicePrefs {
   name?: string;
@@ -35,20 +37,7 @@ export interface SpeakJob {
   onDone(): void;
 }
 
-export function splitSentences(text: string): string[] {
-  const parts = text
-    .replace(/\s+/g, ' ')
-    .trim()
-    .split(/(?<=[.!?])\s+(?=[A-Z0-9"'“(])/);
-  const sentences: string[] = [];
-  for (const part of parts) {
-    const previous = sentences.at(-1);
-    // Keep very short fragments ("Done.") with their neighbour so captions do not flicker.
-    if (previous !== undefined && (previous.length < 26 || part.length < 14) && previous.length + part.length < 84) sentences[sentences.length - 1] = `${previous} ${part}`;
-    else sentences.push(part);
-  }
-  return sentences.filter(Boolean);
-}
+export { splitSentences };
 
 /** About how long a sentence takes to say, in milliseconds. */
 export function readingTime(text: string, rate = 1): number {
@@ -115,6 +104,8 @@ class VoiceEngine {
   }
 
   get soundState(): SoundState {
+    // A recording renders the voices outside the browser; nothing is missing here.
+    if (recording) return 'ok';
     if (!synth) return 'unsupported';
     if (!this.enabled) return 'off';
     if (this.voicesLoaded && this.voices.length === 0) return 'no-voices';
@@ -186,11 +177,37 @@ class VoiceEngine {
         if (generation === this.generation) after();
       }, readingTime(sentence, job.prefs?.rate ?? 1));
     };
+    /**
+     * While a scenario is recorded: the sentence is a rendered audio clip whose
+     * exact length is known. Wait for the beat, put the caption up, report the
+     * moment it was on screen, and hold it for as long as the clip lasts.
+     */
+    const recorded = async (sentence: string, position: number) => {
+      const session = recording!;
+      const request = { deviceId: job.deviceId, role: job.role, slot: job.slot, slots: job.slots, voice: job.prefs?.name, lang: job.prefs?.lang, rate: job.prefs?.rate, text: sentence };
+      try {
+        const clip = await session.prepare(request);
+        if (generation !== this.generation) return;
+        await session.turn(job.deviceId, job.role, position === 0);
+        if (generation !== this.generation) return;
+        job.onSentence(sentence);
+        const at = await session.painted();
+        if (generation !== this.generation) return;
+        session.sentence({ at, clip: clip.id, ms: clip.ms, deviceId: job.deviceId, role: job.role, text: sentence, line: job.text, lineId: generation, index: position, of: sentences.length });
+        this.timer = window.setTimeout(() => {
+          if (generation === this.generation) next();
+        }, Math.max(0, at + clip.ms - Date.now()));
+      } catch (error) {
+        console.error('Recording: could not render a line', error);
+        silent(sentence, next);
+      }
+    };
     const next = () => {
       if (generation !== this.generation) return;
       const sentence = sentences[index];
       index += 1;
       if (sentence === undefined) return finish();
+      if (recording) return void recorded(sentence, index - 1);
       job.onSentence(sentence);
       if (!synth || !this.enabled || this.blocked || (this.voicesLoaded && this.voices.length === 0)) return silent(sentence, next);
 
@@ -241,6 +258,11 @@ class VoiceEngine {
       }, 1800);
       synth.speak(utterance);
     };
+    if (recording) {
+      // Have every sentence of the line rendered while the first one waits its turn.
+      for (const sentence of sentences) void recording.prepare({ deviceId: job.deviceId, role: job.role, slot: job.slot, slots: job.slots, voice: job.prefs?.name, lang: job.prefs?.lang, rate: job.prefs?.rate, text: sentence }).catch(() => undefined);
+      return next();
+    }
     // Chrome fills its voice list just after the page loads. A line that arrives before that waits briefly,
     // so that it is not read by the system default voice.
     if (synth && this.enabled && !this.voicesLoaded) {

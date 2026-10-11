@@ -9,6 +9,7 @@ import { useSyncExternalStore } from 'react';
 import type { DeviceSnapshot, ScenarioRunState, StageEvent, StageSnapshot, TimelineEntry } from '../../src/shared/types';
 import { describeMicProblem, type MicProblem, type VoiceInfo } from '../../src/shared/voices';
 import { api } from './api';
+import { recording } from './recording';
 import { listen, microphonePermission, splitSentences, voice, watchMicrophone, type Listening, type SoundState, type VoicePrefs } from './voice';
 
 export interface Caption {
@@ -46,7 +47,17 @@ export interface UiState {
   voices: VoiceInfo[];
   /** Whether sound is coming out, and if not, why. */
   sound: SoundState;
+  /** A card has asked to open a link, and the person at the device has not answered yet. */
+  link: LinkRequest | null;
   toast: string | null;
+}
+
+export interface LinkRequest {
+  id: number;
+  deviceId: string;
+  /** The server whose card is asking. */
+  server: string;
+  url: string;
 }
 
 const SETTINGS_KEY = 'voicestage.settings';
@@ -79,6 +90,7 @@ let state: UiState = {
   mic: null,
   voices: [],
   sound: 'ok',
+  link: null,
   toast: null,
 };
 voice.enabled = state.settings.voice;
@@ -113,6 +125,24 @@ function updateDevice(deviceId: string, change: (device: DeviceSnapshot) => Devi
 
 function setCaption(deviceId: string, change: Partial<Caption>): void {
   set({ captions: { ...state.captions, [deviceId]: { ...state.captions[deviceId], ...change } } });
+}
+
+/** Devices whose captions should go as soon as the line being spoken is over. */
+const outdated = new Set<string>();
+
+/**
+ * Take down captions that refer to a moment that has passed. A line that is
+ * still being spoken is left to finish, and goes when it has.
+ */
+function clearFinishedCaptions(deviceId: string): void {
+  const caption = state.captions[deviceId];
+  if (!caption) return;
+  if (caption.assistant?.speaking) {
+    outdated.add(deviceId);
+    return;
+  }
+  if (caption.user && caption.user.state !== 'said' && caption.user.state !== 'missed') return;
+  if (caption.user || caption.assistant) setCaption(deviceId, { user: undefined, assistant: undefined });
 }
 
 function deviceIndex(deviceId: string): number {
@@ -171,12 +201,17 @@ function apply(event: StageEvent): void {
       updateDevice(event.deviceId, (device) => ({ ...device, ...event.patch }));
       break;
     case 'transcript':
+      // A new line starts a new moment: nothing said from here on is outdated.
+      outdated.delete(event.deviceId);
       updateDevice(event.deviceId, (device) => ({ ...device, transcript: [...device.transcript, event.line] }));
       // A new line from the person replaces whatever the device said before.
       if (event.line.role === 'user') setCaption(event.deviceId, { user: { text: event.line.text, state: 'said' }, assistant: undefined });
       break;
     case 'timeline':
       updateDevice(event.deviceId, (device) => ({ ...device, timeline: upsert(device.timeline, event.entry) }));
+      // The person did something on the screen itself (pressed a button on a card, say). Whatever was
+      // said before is about a moment that has passed, so it does not stay under the new picture.
+      if (event.entry.kind === 'tool' && event.entry.status !== 'running' && event.entry.origin !== 'assistant' && event.entry.origin !== 'announcement') clearFinishedCaptions(event.deviceId);
       break;
     case 'speech': {
       const device = state.stage?.devices.find((candidate) => candidate.id === event.deviceId);
@@ -189,6 +224,7 @@ function apply(event: StageEvent): void {
         onSentence: (sentence) => {
           const current = state.captions[event.deviceId]?.assistant;
           if (sentence !== null) setCaption(event.deviceId, { assistant: { text: sentence, speaking: true } });
+          else if (outdated.delete(event.deviceId)) setCaption(event.deviceId, { user: undefined, assistant: undefined });
           else if (current) setCaption(event.deviceId, { assistant: { ...current, speaking: false } });
         },
         onDone: () => void api.speechDone(event.deviceId, event.id),
@@ -197,20 +233,36 @@ function apply(event: StageEvent): void {
     }
     case 'cue': {
       // A scenario is about to speak a person's line: show it being said, then let the scenario go on.
-      setCaption(event.deviceId, { user: { text: event.text, state: 'typing' }, assistant: undefined });
+      const show = () => setCaption(event.deviceId, { user: { text: event.text, state: 'typing' }, assistant: undefined });
       const finish = () => {
         setCaption(event.deviceId, { user: { text: event.text, state: 'said' } });
         void api.cueDone(event.id);
       };
-      if (state.settings.voicePeople && state.settings.voice) {
+      if (recording || (state.settings.voicePeople && state.settings.voice)) {
         const device = state.stage?.devices.find((candidate) => candidate.id === event.deviceId);
-        voice.speak({ deviceId: event.deviceId, text: event.text, role: 'person', ...voiceSlot(event.deviceId), prefs: device ? voicePrefs(device, 'person') : undefined, onSentence: () => undefined, onDone: finish });
+        // The line appears when it starts to be heard, which may be a moment later if a device is still speaking.
+        let shown = false;
+        voice.speak({
+          deviceId: event.deviceId,
+          text: event.text,
+          role: 'person',
+          ...voiceSlot(event.deviceId),
+          prefs: device ? voicePrefs(device, 'person') : undefined,
+          onSentence: (sentence) => {
+            if (sentence === null || shown) return;
+            shown = true;
+            show();
+          },
+          onDone: finish,
+        });
       } else {
+        show();
         window.setTimeout(finish, Math.min(4500, 700 + event.text.length * 32));
       }
       break;
     }
     case 'reset':
+      if (state.link?.deviceId === event.deviceId) answerLink(false);
       voice.cancel(event.deviceId);
       updateDevice(event.deviceId, (device) => ({ ...device, timeline: [], transcript: [], screen: null, notification: null, elicitation: null, progress: null, status: 'idle' }));
       setCaption(event.deviceId, { user: undefined, assistant: undefined });
@@ -263,6 +315,32 @@ export function updateSettings(change: Partial<Settings>): void {
 export function showToast(message: string | null): void {
   set({ toast: message });
   if (message) window.setTimeout(() => state.toast === message && set({ toast: null }), 6000);
+}
+
+// --- links a card wants to open ----------------------------------------------------
+
+let linkAnswer: ((open: boolean) => void) | undefined;
+let linkCount = 0;
+
+/**
+ * A card asked the host to open a link (`ui/open-link`). The host has to ask
+ * the person first. It asks on the device's own screen, so nothing ever stops
+ * the page the way a browser dialog would. Resolves with the answer.
+ */
+export function askToOpenLink(deviceId: string, server: string, url: string): Promise<boolean> {
+  // One question at a time; a second request takes the place of the first, which counts as "no".
+  answerLink(false);
+  return new Promise((resolve) => {
+    linkAnswer = resolve;
+    set({ link: { id: (linkCount += 1), deviceId, server, url } });
+  });
+}
+
+export function answerLink(open: boolean): void {
+  const answer = linkAnswer;
+  linkAnswer = undefined;
+  if (state.link) set({ link: null });
+  answer?.(open);
 }
 
 export function say(deviceId: string, text: string, source: 'typed' | 'voice' = 'typed'): void {

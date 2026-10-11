@@ -1,6 +1,7 @@
 /** The bar across the top: what stage this is, the scenario player, and the voice and inspector switches. */
 import { useEffect, useState } from 'react';
 import { api } from '../api';
+import { presenting } from '../recording';
 import { showToast, updateSettings, useStage } from '../store';
 import { voice } from '../voice';
 import { Logo, MuteIcon, NextIcon, PanelIcon, PlayIcon, ResetIcon, SpeakerIcon, StopIcon } from './icons';
@@ -117,8 +118,8 @@ export function TopBar() {
         {stage && <span className="brand__stage">{stage.name}</span>}
         {!connected && stage && <span className="brand__offline">Reconnecting...</span>}
       </div>
-      {stage && <ScenarioPlayer />}
-      <div className="topbar__tools">
+      {stage && !presenting && <ScenarioPlayer />}
+      <div className="topbar__tools" hidden={presenting}>
         <button
           type="button"
           className="icon-button"

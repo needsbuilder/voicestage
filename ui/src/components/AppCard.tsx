@@ -22,7 +22,8 @@ import { useEffect, useRef, useState } from 'react';
 import { withCsp } from '../../../src/shared/card-html';
 import { PRODUCT_NAME, PRODUCT_VERSION, type CardResource, type DeviceKind, type ScreenContent } from '../../../src/shared/types';
 import { api } from '../api';
-import { say, showToast } from '../store';
+import { recording } from '../recording';
+import { askToOpenLink, say, showToast } from '../store';
 
 function textOfBlocks(blocks: Array<{ type: string; text?: string }> | undefined): string {
   return (blocks ?? [])
@@ -72,12 +73,12 @@ export function AppCard({ deviceId, kind, screen }: Props) {
     bridge.onreadresource = async (params) => (await api.readResource(deviceId, screen.server, params.uri)) as never;
     bridge.onopenlink = async ({ url }) => {
       void api.cardEvent(deviceId, 'open-link', { url }, card.uri);
-      const safe = /^https?:\/\//i.test(url);
-      if (safe && window.confirm(`The card from "${screen.server}" wants to open:\n\n${url}\n\nOpen it in a new tab?`)) {
-        window.open(url, '_blank', 'noopener,noreferrer');
-        return {};
-      }
-      return { isError: true };
+      // Only web links, and only when the person at the device says yes. The question is put
+      // on the device's screen; the page is never stopped by a browser dialog.
+      if (!/^https?:\/\//i.test(url) || disposed) return { isError: true };
+      const open = await askToOpenLink(deviceId, screen.server, url);
+      void api.cardEvent(deviceId, open ? 'open-link-allowed' : 'open-link-refused', { url }, card.uri);
+      return open ? {} : { isError: true };
     };
     bridge.onmessage = async (params) => {
       // The card adds a message to the conversation, as if the person had said it.
@@ -98,6 +99,7 @@ export function AppCard({ deviceId, kind, screen }: Props) {
       setState('ready');
       void bridge.sendToolInput({ arguments: screen.arguments });
       void bridge.sendToolResult(screen.result as never);
+      recording?.cardShown(deviceId, card.uri, screen.tool.name);
     };
 
     const failed = window.setTimeout(() => {

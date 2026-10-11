@@ -112,6 +112,10 @@ code {
   color: var(--ink-faint);
 }
 
+[hidden] {
+  display: none !important;
+}
+
 /* --- layout ------------------------------------------------------------------ */
 
 /* Rows: the top bar, notices (only when something about voice needs saying), the stage. */
@@ -475,6 +479,8 @@ code {
   --cap: 2.35cqw;
   --cap-small: 1.6cqw;
   --pad: 2.4cqw;
+  /* The band at the top of the screen: what is being shown on the left, a notification on the right. */
+  --bar: calc(var(--cap-small) * 2.4);
 }
 
 .device--phone .screen {
@@ -683,6 +689,17 @@ code {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* On a display the line sits in a band of its own, tall enough for a notification beside it. */
+.device--display .content__source {
+  height: var(--bar);
+  padding-top: 0;
+  line-height: var(--bar);
+}
+
+.device--display .screen:has(> .notice) .content__source {
+  padding-right: 64%;
 }
 
 .content__source span {
@@ -1136,15 +1153,25 @@ code {
   transform-origin: 50% 10%;
 }
 
+/* A notification never covers what the screen is showing. On a display it fits in the band at the top. */
+.device--display .notice {
+  top: calc(var(--bar) * 0.13);
+  height: calc(var(--bar) * 0.74);
+  padding-block: 0;
+  font-size: calc(var(--cap-small) * 0.88);
+  box-shadow: 0 0.3cqw 0.9cqw rgba(0, 0, 0, 0.18);
+}
+
+/* On a phone it is a banner in a row of its own, and the screen's content starts under it. */
 .device--phone .notice {
-  top: 48px;
-  left: 3cqw;
-  right: 3cqw;
+  position: static;
+  flex: none;
+  align-self: stretch;
+  margin: 0 3cqw 2.4cqw;
   max-width: none;
   border-radius: 4.5cqw;
   padding: 2.6cqw 3.4cqw;
   background: rgba(17, 24, 39, 0.94);
-  backdrop-filter: blur(8px);
 }
 
 .device--phone .notice span {
@@ -2403,3 +2430,116 @@ code {
   color: var(--screen-soft);
   font-style: italic;
 }
+
+/* --- presenting (?present=1) --------------------------------------------------
+   The stage for a camera or a recording: the devices and who is at each one,
+   without the controls for driving them. */
+
+.app--presenting .dock {
+  justify-content: center;
+  border-color: transparent;
+  background: none;
+  backdrop-filter: none;
+}
+
+.app--presenting .dock__talk {
+  display: none;
+}
+
+/* An idle device shows its clock and greeting, not the prompts for whoever is driving. */
+.app--presenting .ambient__hints,
+.app--presenting .captions__idle {
+  display: none;
+}
+
+/* --- a card asks to open a link ------------------------------------------------------
+   Asked on the device's own screen, above the captions. */
+
+.link-prompt {
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  display: flex;
+  align-items: flex-end;
+  background: rgba(15, 23, 42, 0.32);
+  animation: fade 0.2s ease-out;
+}
+
+@keyframes fade {
+  from {
+    opacity: 0;
+  }
+}
+
+.link-prompt__sheet {
+  width: 100%;
+  padding: calc(var(--pad) * 0.9) var(--pad) var(--pad);
+  border-radius: calc(var(--pad) * 0.9) calc(var(--pad) * 0.9) 0 0;
+  background: var(--screen-bg);
+  color: var(--screen-ink);
+  box-shadow: 0 -1cqw 3cqw rgba(15, 23, 42, 0.25);
+  animation: arrive 0.3s ease-out;
+}
+
+.link-prompt p {
+  margin: 0;
+}
+
+.link-prompt__title {
+  font-size: var(--cap);
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.link-prompt__from {
+  margin-top: 0.35em !important;
+  font-size: var(--cap-small);
+  color: var(--screen-soft);
+}
+
+.link-prompt__url {
+  margin-top: 0.6em !important;
+  font-family: var(--mono);
+  font-size: calc(var(--cap-small) * 0.86);
+  color: var(--screen-soft);
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.link-prompt__actions {
+  display: flex;
+  gap: 0.7em;
+  margin-top: calc(var(--pad) * 0.7);
+  font-size: var(--cap-small);
+}
+
+.link-prompt__actions button {
+  flex: 1;
+  min-height: 2.9em;
+  border-radius: 0.8em;
+  font: inherit;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.link-prompt__open {
+  border: 0;
+  background: var(--screen-ink);
+  color: var(--screen-bg);
+}
+
+.link-prompt__no {
+  border: 1.5px solid var(--screen-line);
+  background: transparent;
+  color: var(--screen-ink);
+}
+
+.device--display .link-prompt__sheet {
+  width: min(100%, 46cqw);
+  margin: 0 auto var(--pad);
+  border-radius: calc(var(--pad) * 0.7);
+}
+

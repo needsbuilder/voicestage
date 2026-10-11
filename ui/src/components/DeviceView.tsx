@@ -5,8 +5,9 @@
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent, type PointerEvent } from 'react';
 import type { CardResource, DeviceSnapshot, ScreenContent } from '../../../src/shared/types';
 import { api } from '../api';
+import { recording } from '../recording';
 import { describeMicProblem } from '../../../src/shared/voices';
-import { say, showToast, startListening, stopListening, stopWake, useStage, type Caption } from '../store';
+import { answerLink, say, showToast, startListening, stopListening, stopWake, useStage, type Caption } from '../store';
 import { recognitionAvailable } from '../voice';
 import { AppCard } from './AppCard';
 import { DefaultCardView } from './DefaultCardView';
@@ -94,6 +95,10 @@ function Ambient({ device }: { device: DeviceSnapshot }) {
 
 function ScreenBody({ device }: { device: DeviceSnapshot }) {
   const screen = device.screen;
+  // An MCP Apps card says for itself when it has been drawn; the default card is drawn at once.
+  useEffect(() => {
+    if (screen && !screen.card) recording?.cardShown(device.id, 'default', screen.tool.name);
+  }, [device.id, screen?.id]); // eslint-disable-line react-hooks/exhaustive-deps
   if (device.elicitation) return <QuestionForm key={device.elicitation.id} deviceId={device.id} question={device.elicitation} />;
   if (!screen) return <Ambient device={device} />;
   const serverTitle = device.servers.find((server) => server.id === screen.server)?.serverInfo?.title ?? screen.server;
@@ -150,6 +155,53 @@ function StatusLayer({ device }: { device: DeviceSnapshot }) {
         </button>
       )}
     </>
+  );
+}
+
+/** A card on this device wants to open a link: the device asks, and opens it only on a yes. */
+function LinkPrompt({ device }: { device: DeviceSnapshot }) {
+  const link = useStage((state) => state.link);
+  const open = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (link?.deviceId === device.id) open.current?.focus({ preventScroll: true });
+  }, [link?.id, link?.deviceId, device.id]);
+  if (!link || link.deviceId !== device.id) return null;
+  let host = link.url;
+  try {
+    host = new URL(link.url).host;
+  } catch {
+    // Shown as it came.
+  }
+  const from = device.servers.find((server) => server.id === link.server)?.serverInfo?.title ?? link.server;
+  return (
+    <div className="link-prompt" role="alertdialog" aria-labelledby={`link-${link.id}-title`} aria-describedby={`link-${link.id}-url`} onKeyDown={(event) => event.key === 'Escape' && answerLink(false)}>
+      <div className="link-prompt__sheet">
+        <p className="link-prompt__title" id={`link-${link.id}-title`}>
+          Open {host}?
+        </p>
+        <p className="link-prompt__from">The {from} card wants to open a web page in a new tab.</p>
+        <p className="link-prompt__url" id={`link-${link.id}-url`}>
+          {link.url}
+        </p>
+        <div className="link-prompt__actions">
+          <button
+            type="button"
+            className="link-prompt__open"
+            ref={open}
+            onClick={() => {
+              // Opened here, in the click itself, so the browser sees it as the person's doing.
+              window.open(link.url, '_blank', 'noopener,noreferrer');
+              answerLink(true);
+            }}
+          >
+            Open
+          </button>
+          <button type="button" className="link-prompt__no" onClick={() => answerLink(false)}>
+            Not now
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -280,7 +332,7 @@ export function DeviceView({ device }: { device: DeviceSnapshot }) {
   const activity = activityOf(device, caption, listening === 'talk' || (listening === 'wake' && caption?.user?.state === 'listening'));
 
   return (
-    <section className={`device device--${device.kind} is-${activity}`} aria-label={`${device.name}, used by ${device.person.name}`}>
+    <section className={`device device--${device.kind} is-${activity}`} data-device={device.id} aria-label={`${device.name}, used by ${device.person.name}`}>
       <div className="device__body">
         {device.kind === 'speaker' ? (
           <div className="speaker">
@@ -302,6 +354,7 @@ export function DeviceView({ device }: { device: DeviceSnapshot }) {
               <div className="screen__main">
                 <ScreenBody device={device} />
               </div>
+              <LinkPrompt device={device} />
               <Captions device={device} caption={caption} />
               <span className="lightbar" role="status" aria-label={ACTIVITY_LABEL[activity]} />
             </div>
