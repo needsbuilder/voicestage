@@ -1,6 +1,6 @@
 # Product feedback: what we built Voicestage with
 
-Voicestage is a local simulator for voice-first MCP apps, and the stage our track entry, Hold On, is demonstrated on. It is an MCP **client and host**: it connects to someone else's server, runs an assistant per simulated device, renders MCP Apps cards, loads Agent Skills, and listens and speaks through the browser. Hold On's feedback (`holdon/docs/hackathon/product-feedback.md`) covers the same standards from the server's side; this document is the view from the other end of the connection.
+Voicestage is a local simulator for voice-first MCP apps, and the stage our track entry, Hold On, is demonstrated on. It is an MCP **client and host**: it connects to someone else's server, runs an assistant per simulated device, renders MCP Apps cards, loads Agent Skills, and listens and speaks through the browser. Hold On's feedback ([`holdon/docs/hackathon/product-feedback.md`](https://github.com/needsbuilder/holdon/blob/main/docs/hackathon/product-feedback.md)) covers the same standards from the server's side; this document is the view from the other end of the connection.
 
 The incidents behind each criticism are in [friction-log.md](friction-log.md), cited here as V-01 to V-15. Where we cite F-numbers, they are entries in Hold On's log that we met again as a host.
 

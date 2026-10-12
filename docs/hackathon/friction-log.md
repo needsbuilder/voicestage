@@ -2,7 +2,7 @@
 
 Voicestage is a local simulator for voice-first MCP apps: simulated devices you can talk to, each with its own MCP connection, an assistant, a screen that renders MCP Apps cards, and an inspector. It was built for the Alexa+ track for one reason, stated in the hackathon FAQ: participants get no Alexa+ developer tools, and are told to demonstrate on "your own web-based simulator or front end". It is also the stage on which our track entry, Hold On, is demonstrated.
 
-Hold On's own log (`holdon/docs/hackathon/friction-log.md`, entries F-01 to F-14) records the friction of writing an MCP server and its cards. This log is the other side of the wire: what we ran into writing the **client and host** (the MCP client, the MCP Apps host, a skills loader, an agent loop), and the browser voice APIs a simulator stands on. Where the two logs meet, we give only what the host side adds, in [Seen again from the host side](#seen-again-from-the-host-side).
+Hold On's own log ([`holdon/docs/hackathon/friction-log.md`](https://github.com/needsbuilder/holdon/blob/main/docs/hackathon/friction-log.md), entries F-01 to F-14) records the friction of writing an MCP server and its cards. This log is the other side of the wire: what we ran into writing the **client and host** (the MCP client, the MCP Apps host, a skills loader, an agent loop), and the browser voice APIs a simulator stands on. Where the two logs meet, we give only what the host side adds, in [Seen again from the host side](#seen-again-from-the-host-side).
 
 Each entry says how we met it:
 

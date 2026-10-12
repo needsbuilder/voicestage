@@ -369,7 +369,7 @@ Names that break the format's rules produce a warning in the inspector, not a fa
 
 ## Example: Hold On
 
-[`examples/holdon`](examples/holdon) sets the stage for Hold On, a separate open-source MCP server and Agent Skill: a money-safety add-on for voice assistants used by older adults. Margaret asks her kitchen display to pay something; Hold On checks the request against scam patterns published by official sources, puts it on hold, and her daughter Sarah, on her phone, approves or denies it. All payments are simulated.
+[`examples/holdon`](examples/holdon) sets the stage for [Hold On](https://github.com/needsbuilder/holdon), a separate open-source MCP server and Agent Skill: a money-safety add-on for voice assistants used by older adults. Margaret asks her kitchen display to pay something; Hold On checks the request against scam patterns published by official sources, puts it on hold, and her daughter Sarah, on her phone, approves or denies it. All payments are simulated.
 
 ```bash
 # in the Hold On repository
@@ -379,7 +379,7 @@ npm install && npm run build && npm run seed:reset && npm start     # http://loc
 npm run dev -- --config examples/holdon/voicestage.config.yaml
 ```
 
-To record one of its scenarios with the system voices, and with Kokoro voices (see [Kokoro](#kokoro) for what that needs):
+To record one of its scenarios with the system voices, and with Kokoro voices (see [Kokoro](#kokoro) for what that needs). The scenes in [Hold On's demo video](https://youtu.be/FjqPXs_27Zk) were recorded the second way:
 
 ```bash
 npm run record -- examples/holdon/scenarios/b-utility-bill.yaml --out out/recordings
