@@ -12,7 +12,7 @@ Each entry says how we met it:
 
 All error text is copied from a terminal or from Chrome. Reproductions were run on 2026-10-11 with the versions below. Anything we could not re-check was left out.
 
-**How the work was done.** The code was written with an AI coding agent (Claude Code) on 2026-10-10 and 11, from an empty directory, and this log is drawn from that session's record. That matters for two entries (V-12, V-13): an agent meets an SDK through `node_modules` first, not through a documentation site.
+**How the work was done.** The code was written with an AI coding agent (Claude Code) on 2026-10-10 and 11 (Pacific time), from an empty directory, and this log is drawn from that session's record. That matters for two entries (V-12, V-13): an agent meets an SDK through `node_modules` first, not through a documentation site.
 
 **What this log is not.** We had no access to any Alexa+ tool, device or runtime (V-15). Nothing here says how the real Alexa+ behaves.
 

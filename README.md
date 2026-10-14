@@ -1,6 +1,6 @@
 # Voicestage
 
-**A local stage for voice-first MCP apps.** Point it at a Streamable HTTP MCP server, and optionally at Agent Skills folders, and it gives you simulated devices you can talk to: a smart display, a speaker, a phone. Each one has its own assistant, its own MCP connection, a screen that renders MCP Apps cards, captions, and a developer inspector that shows every tool call.
+**A local stage for voice-first MCP apps.** Point it at a Streamable HTTP MCP server, and optionally at Agent Skills folders, and it gives you simulated devices you can talk to: a smart display, a speaker, a phone. Each one has its own assistant, its own MCP connection, captions, and a developer inspector that shows every tool call; the display and the phone also have a screen that renders MCP Apps cards.
 
 ![A kitchen display showing a hold card, and a phone showing the family approval card](docs/screenshots/03-hold-and-approval.png)
 
@@ -379,7 +379,7 @@ npm install && npm run build && npm run seed:reset && npm start     # http://loc
 npm run dev -- --config examples/holdon/voicestage.config.yaml
 ```
 
-To record one of its scenarios with the system voices, and with Kokoro voices (see [Kokoro](#kokoro) for what that needs). The scenes in [Hold On's demo video](https://youtu.be/FjqPXs_27Zk) were recorded the second way:
+To record one of its scenarios with the system voices, and with Kokoro voices (see [Kokoro](#kokoro) for what that needs). The three conversation scenes in [Hold On's demo video](https://youtu.be/FjqPXs_27Zk) were recorded the second way, then cut and framed for the video:
 
 ```bash
 npm run record -- examples/holdon/scenarios/b-utility-bill.yaml --out out/recordings
@@ -390,7 +390,7 @@ KOKORO_DIR=/path/to/the/model/files npm run record -- examples/holdon/scenarios/
 
 [`voicestage.kokoro.config.yaml`](examples/holdon/voicestage.kokoro.config.yaml) is the same stage with a Kokoro voice for each speaker (the kitchen display `af_bella`, Sarah's phone `am_michael`, Margaret `bf_emma` a little slower, Sarah `af_sarah`) and the spellings those voices need for dollar amounts, a phone number and the confirmation code.
 
-Three scenarios ship with it: a caller claiming to be the IRS demanding gift cards (stopped, the family is told, it can only be denied), a genuine electric bill (verified, held, approved, paid, receipt), and a contractor nobody can look up (held until Sarah vouches for him). They exercise two roles with two tokens, three MCP Apps cards, an elicitation, progress notifications and announcements on both devices.
+Three scenarios ship with it: a caller claiming to be the IRS demanding gift cards (stopped, the family is told, it can only be denied), a genuine electric bill (verified, held, approved, paid, receipt), and a contractor nobody can look up (held until Sarah vouches for him). They exercise two roles with two tokens, three MCP Apps cards and announcements on both devices. Progress while waiting for the family is covered by `test/holdon.e2e.test.ts`; none of the three asks a clarifying question, because every detail is given.
 
 ![The request was stopped: the display says so, and the phone shows why](docs/screenshots/09-stopped-request.png)
 
